@@ -7,11 +7,12 @@ This repository contains the analysis and figure-generation code for the manuscr
 **Limited cross-mine transferability of machine learning models for mine water inrush source identification: an independent external validation**
 
 The code reproduces the cross-mine external-validation protocol and the SHAP–KS feature-shift diagnostics reported in the paper.
+
 ## Files
 
 * `main_analysis_pipeline.py`: Main machine-learning pipeline for the 4 algorithms × 7 tuning strategies experiment (28 configurations).
 * `shap_all_combinations_patch.py`: SHAP compatibility and export helper used by the main pipeline.
-* `make_figures_submission.py`: Regenerates the manuscript result figures from the processed source-data tables in `Figure_Source_Data`.
+* `make_figures_submission.py`: Generates the manuscript figures when the processed source-data tables are available locally.
 * `requirements.txt`: Direct runtime dependencies.
 * `requirements-lock.txt`: Full pinned environment, including transitive dependencies, for strict reproduction.
 * `LICENSE`: MIT License.
@@ -19,21 +20,13 @@ The code reproduces the cross-mine external-validation protocol and the SHAP–K
 
 ## Data availability
 
-The hydrochemical datasets used in this study, including the training set, internal test set, and external validation set, were obtained from mine hydrogeological surveys and are subject to data-sharing restrictions. They are not publicly available because they contain mine-specific hydrogeological information and are subject to data-provider restrictions.
+The input datasets and sample-level feature arrays are not included in this public repository because they contain mine-specific hydrogeological information and are subject to data-provider restrictions. Data access requests should be directed to the corresponding author Bin Xu (jinzigaofeng@126.com) and will be considered upon reasonable request and with permission from the relevant data providers.
 
-The data may be made available from the corresponding authors upon reasonable request and with permission from the relevant data providers.
-
-When the input data are available locally, they should be placed in an `Input_Data` directory containing:
-
-* `train_set.xlsx`: Malan Mine training set, 153 samples.
-* `test_set.xlsx`: Malan Mine internal test set, 39 samples.
-* `external_validation_set.xlsx`: Jinci Spring Basin external validation set, 903 samples.
-
-Column definitions are documented in `Input_Data/README.md`. The processed source-data tables needed to regenerate the figures are provided in `Figure_Source_Data`.
+When authorized data are available locally, they should be placed in an `Input_Data` directory containing `train_set.xlsx`, `test_set.xlsx`, and `external_validation_set.xlsx`. Processed figure-source files, if available locally, should be placed in a `Figure_Source_Data` directory.
 
 ## Reproducing the main analysis
 
-The full model-search workflow can be computationally expensive. To rerun the submitted protocol:
+The full model-search workflow can be computationally expensive. To rerun the submitted protocol (with authorized input data placed in a local `Input_Data` directory):
 
 ```bash
 python main_analysis_pipeline.py --data_dir Input_Data --output_dir Recreated_Model_Output --protocol budget_matched_repeated
@@ -43,13 +36,13 @@ The external validation set is used only after the model-selection step, for loc
 
 ## Regenerating figures from source data
 
-The processed source data used for the submitted figures are in `Figure_Source_Data`. To regenerate the main and supplementary result figures:
+The figure-generation script is provided to document and reproduce the plotting workflow. Complete regeneration of all submitted figures requires processed source-data files in a local `Figure_Source_Data` directory. These files are not included in the public repository because some figure inputs are derived from restricted hydrochemical datasets.
 
 ```bash
 python make_figures_submission.py --source_dir Figure_Source_Data --which all
 ```
 
-Outputs are written to `Figure_Recreated` and `Figure_Recreated_Supplementary`. The finalized submission copies are named `Fig1`–`Fig11` and `FigS1`–`FigS4`. The figure generator accepts both the original internal export names and the cleaned submission filenames used in `Figure_Source_Data`.
+Outputs are written to `Figure_Recreated` and `Figure_Recreated_Supplementary`. The finalized submission copies are named `Fig1`–`Fig11` and `FigS1`–`FigS4`. The figure generator accepts both the original internal export names and the cleaned submission filenames.
 
 ## Environment
 

@@ -1,13 +1,12 @@
-# Code for Cross-mine External Validation and SHAP–KS Diagnostics in Mine Water Inrush Source Identification
+# Code for "Limited cross-mine transferability of machine learning models for mine water inrush source identification: an independent external validation"
 
 [![DOI](https://zenodo.org/badge/1281273287.svg)](https://doi.org/10.5281/zenodo.20928385)
 
 This repository contains the analysis and figure-generation code for the manuscript:
 
-**Cross-mine external validation and SHAP–KS diagnostics for transferable machine learning in mine water inrush source identification**
+**Limited cross-mine transferability of machine learning models for mine water inrush source identification: an independent external validation**
 
 The code reproduces the cross-mine external-validation protocol and the SHAP–KS feature-shift diagnostics reported in the paper.
-
 ## Files
 
 * `main_analysis_pipeline.py`: Main machine-learning pipeline for the 4 algorithms × 7 tuning strategies experiment (28 configurations).
@@ -96,7 +95,7 @@ The optional `--feature_method boruta` branch requires the external `boruta` pac
 
 If you use this code, please cite the manuscript and this archived repository:
 
-Gao, D.; Zhao, F.; Xu, B.; Li, S.; Yin, S.; Sun, H.; Cao, S. (2026). Cross-mine external validation and SHAP–KS diagnostics for transferable machine learning in mine water inrush source identification. Manuscript under review.
+Gao, D.; Zhao, F.; Xu, B.; Li, S.; Yin, S.; Sun, H.; Cao, S. (2026). Limited cross-mine transferability of machine learning models for mine water inrush source identification: an independent external validation. Manuscript under review.
 
 Archived release: Zenodo, https://doi.org/10.5281/zenodo.20928385
 

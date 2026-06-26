@@ -1,5 +1,7 @@
 # Code for Cross-mine External Validation and SHAP–KS Diagnostics in Mine Water Inrush Source Identification
 
+[![DOI](https://zenodo.org/badge/1281273287.svg)](https://doi.org/10.5281/zenodo.20928385)
+
 This repository contains the analysis and figure-generation code for the manuscript:
 
 **Cross-mine external validation and SHAP–KS diagnostics for transferable machine learning in mine water inrush source identification**

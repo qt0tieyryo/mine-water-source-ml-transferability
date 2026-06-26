@@ -96,7 +96,7 @@ If you use this code, please cite the manuscript and this archived repository:
 
 Gao, D.; Zhao, F.; Xu, B.; Li, S.; Yin, S.; Sun, H.; Cao, S. (2026). Cross-mine external validation and SHAP–KS diagnostics for transferable machine learning in mine water inrush source identification. Manuscript under review.
 
-Archived release: Zenodo, https://doi.org/10.5281/zenodo.XXXXXXX
+Archived release: Zenodo, https://doi.org/10.5281/zenodo.20928385
 
 ## License
 

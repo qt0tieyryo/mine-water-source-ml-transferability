@@ -1,6 +1,6 @@
 # Code for "Limited cross-mine transferability of machine learning models for mine water inrush source identification: an independent external validation"
 
-[![DOI](https://zenodo.org/badge/1281273287.svg)](https://doi.org/10.5281/zenodo.20928385)
+[![DOI](https://zenodo.org/badge/1281273287.svg)](https://doi.org/10.5281/zenodo.21039159)
 
 This repository contains the analysis and figure-generation code for the manuscript:
 
@@ -83,7 +83,7 @@ If you use this code, please cite the manuscript and this archived repository:
 
 Gao, D.; Zhao, F.; Xu, B.; Li, S.; Yin, S.; Sun, H.; Cao, S. (2026). Limited cross-mine transferability of machine learning models for mine water inrush source identification: an independent external validation. Manuscript under review.
 
-Archived release: Zenodo, https://doi.org/10.5281/zenodo.20928385
+Archived release: Zenodo, https://doi.org/10.5281/zenodo.21039159
 
 ## License
 

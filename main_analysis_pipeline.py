@@ -112,8 +112,8 @@ from shap_all_combinations_patch import (
     generate_shap_all_combinations,
 )
 
-# Deep Learning imports omitted  - small sample size (n=179) precludes reliable
-# neural network training; see Methods section for rationale.
+# Deep Learning imports omitted  - small training-domain sample size (n=192:
+# 153 train + 39 internal test) precludes reliable neural network training.
 
 warnings.filterwarnings('ignore', category=UserWarning, module='lightgbm')
 warnings.filterwarnings('ignore', category=FutureWarning, module='sklearn')
@@ -550,7 +550,7 @@ def parse_arguments():
     parser.add_argument('--train_path', type=str, required=False, default=None)
     parser.add_argument('--test_path', type=str, required=False, default=None)
     parser.add_argument('--output_dir', type=str, required=False,
-                        default=str(Path(__file__).parent / 'Matrix_28_Output'))
+                        default=str(Path(__file__).parent / 'output6.28'))
     parser.add_argument('--protocol', type=str,
                         choices=['budget_matched_repeated', 'nested_generalization'],
                         default='budget_matched_repeated',
@@ -625,7 +625,8 @@ def parse_arguments():
 
 def resolve_paths(args):
     """Resolve data/output paths with WSL2-local defaults."""
-    default_output_arg = str(Path(__file__).parent / 'Matrix_28_Output')
+    project_output_dir = Path(__file__).resolve().parent / 'output6.28'
+    default_output_arg = str(Path(__file__).parent / 'output6.28')
     default_data_dir = _default_data_dir()
     output_env = os.environ.get('MINEWATER_OUTPUT_DIR')
 
@@ -636,7 +637,7 @@ def resolve_paths(args):
     elif IDE_DEFAULT_OUTPUT_DIR:
         output_dir = Path(IDE_DEFAULT_OUTPUT_DIR).expanduser()
     else:
-        output_dir = default_data_dir / 'Output'
+        output_dir = project_output_dir
 
     if getattr(args, 'convergence_only', False):
         return None, None, output_dir, None

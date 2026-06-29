@@ -1,6 +1,6 @@
 # Code for "Limited cross-mine transferability of machine learning models for mine water inrush source identification: an independent external validation"
 
-[![DOI](https://zenodo.org/badge/1281273287.svg)](https://doi.org/10.5281/zenodo.21039159)
+[![DOI](https://zenodo.org/badge/1281273287.svg)](https://doi.org/10.5281/zenodo.20928384)
 
 This repository contains the analysis and figure-generation code for the manuscript:
 

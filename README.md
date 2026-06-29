@@ -14,7 +14,6 @@ The code reproduces the cross-mine external-validation protocol and the SHAP–K
 * `shap_all_combinations_patch.py`: SHAP compatibility and export helper used by the main pipeline.
 * `make_figures_submission.py`: Generates the manuscript figures when the processed source-data tables are available locally.
 * `requirements.txt`: Direct runtime dependencies.
-* `requirements-lock.txt`: Full pinned environment, including transitive dependencies, for strict reproduction.
 * `LICENSE`: MIT License.
 * `.gitignore`: Prevents accidental upload of restricted data, local outputs, and temporary files.
 
@@ -48,7 +47,7 @@ Outputs are written to `Figure_Recreated` and `Figure_Recreated_Supplementary`. 
 
 The analysis was run with the following environment:
 
-* Python 3.14.4
+* Python 3.14
 * scikit-learn 1.8.0
 * XGBoost 3.2.0
 * LightGBM 4.6.0
@@ -66,12 +65,6 @@ Install the direct runtime dependencies with:
 
 ```bash
 pip install -r requirements.txt
-```
-
-For an exact reproduction of the reported environment, including all transitive dependencies, use:
-
-```bash
-pip install -r requirements-lock.txt
 ```
 
 The optional `--feature_method boruta` branch requires the external `boruta` package and was not part of the submitted default protocol. PyMuPDF is optional and is used only for PDF vector-quality checks in `make_figures_submission.py`; figure generation still runs when PyMuPDF is unavailable.

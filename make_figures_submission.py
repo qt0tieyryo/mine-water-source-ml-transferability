@@ -17,7 +17,7 @@ The main manuscript mapping is:
   Fig6  external confusion matrices for representative models
   Fig7  eta-squared decomposition
   Fig8  train/external feature-shift ECDF panels
-  Fig9  global SHAP importance for LightGBM-Default and RF-Default
+  Fig9  global SHAP importance for the latest external-validation and internal-test leaders
   Fig10 SHAP rank migration
   Fig11 joint SHAP-KS risk map
 """
@@ -174,15 +174,19 @@ TIMES_FONT_SETTINGS = {
 
 
 def default_source_dir() -> Path:
-    return Path(__file__).resolve().parents[1] / "Figure_Source_Data"
+    script_dir = Path(__file__).resolve().parent
+    latest_source = script_dir / "output6.28" / "Figure_Source_Data_latest_20260628"
+    if latest_source.exists():
+        return latest_source
+    return script_dir.parents[0] / "Figure_Source_Data"
 
 
 def default_out_dir() -> Path:
-    return Path(__file__).resolve().parents[1] / "Figure_Recreated"
+    return Path(__file__).resolve().parent / "output6.28" / "Figure_Recreated"
 
 
 def default_supp_out_dir() -> Path:
-    return Path(__file__).resolve().parents[1] / "Figure_Recreated_Supplementary"
+    return Path(__file__).resolve().parent / "output6.28" / "Figure_Recreated_Supplementary"
 
 
 def set_style() -> None:
@@ -331,6 +335,42 @@ def read_csv(source_dir: Path, name: str) -> pd.DataFrame:
         except UnicodeDecodeError:
             continue
     return pd.read_csv(path)
+
+
+def best_models_from_summary(source_dir: Path) -> dict[str, str]:
+    """Return model names directly from the active source-data summary table."""
+    df = read_csv(source_dir, "FinalEval_Test_External_Summary.csv")
+    required = {"Model", "Test_F1_Macro_mean", "Val_F1_Macro_mean"}
+    missing = required.difference(df.columns)
+    if missing:
+        raise KeyError(f"Missing required summary columns: {sorted(missing)}")
+    return {
+        "internal_test_best": str(df.loc[df["Test_F1_Macro_mean"].idxmax(), "Model"]),
+        "external_val_best": str(df.loc[df["Val_F1_Macro_mean"].idxmax(), "Model"]),
+    }
+
+
+def shap_role_models(source_dir: Path) -> dict[str, str]:
+    """Return SHAP role-to-model mapping, with summary-table fallback."""
+    path = data_file(source_dir, "SHAP_Generalization_Contrast.csv")
+    mapping: dict[str, str] = {}
+    if path.exists():
+        df = read_csv(source_dir, "SHAP_Generalization_Contrast.csv")
+        if {"Role", "Model"}.issubset(df.columns):
+            mapping.update(df.groupby("Role")["Model"].first().to_dict())
+    for k, v in best_models_from_summary(source_dir).items():
+        mapping.setdefault(k, v)
+    return mapping
+
+
+def ordered_leader_models(source_dir: Path) -> list[str]:
+    roles = shap_role_models(source_dir)
+    models = [roles["external_val_best"], roles["internal_test_best"]]
+    return list(dict.fromkeys(models))
+
+
+def clean_model_label(model: str) -> str:
+    return model.replace("-", "-\n")
 
 
 def clean_feature_id(value: str) -> str:
@@ -515,21 +555,16 @@ def figure_05_external(source_dir: Path, dirs: dict[str, Path], qa: dict) -> Non
     ax1.set_ylabel(r"External macro-$F_{1}$")
     ax1.set_title("(b)", loc="left", fontweight="bold", pad=7)
     box_axes(ax1, grid_axis="both")
-    key_models = {
-        "LightGBM-Default": {
-            "text": "External leader\nLightGBM-Default",
-            "xytext": (0.757, 0.4070),
-            "ha": "left",
-            "line": ((0.784, 0.4079), (0.7975, 0.4089)),
-        },
-        "RF-Default": {
-            "text": "Internal leader\nRF-Default",
-            "xytext": (0.837, 0.3865),
-            "ha": "right",
-            "line": ((0.839, 0.3872), (0.8465, 0.3891)),
-        },
-    }
-    for model, opts in key_models.items():
+    leaders = best_models_from_summary(source_dir)
+    key_models = [
+        (leaders["external_val_best"], "External leader", (-12, 2)),
+        (leaders["internal_test_best"], "Internal leader", (-12, -7)),
+    ]
+    seen_models: set[str] = set()
+    for model, role_text, xytext in key_models:
+        if model in seen_models or model not in set(df["Model"]):
+            continue
+        seen_models.add(model)
         r = df[df["Model"].eq(model)].iloc[0]
         ax1.scatter(
             r["Test_F1_Macro_mean"],
@@ -540,18 +575,25 @@ def figure_05_external(source_dir: Path, dirs: dict[str, Path], qa: dict) -> Non
             linewidths=1.0,
             zorder=4,
         )
-        ax1.text(
-            opts["xytext"][0],
-            opts["xytext"][1],
-            opts["text"],
-            ha=opts["ha"],
+        ax1.annotate(
+            f"{role_text}\n{model}",
+            xy=(r["Test_F1_Macro_mean"], r["Val_F1_Macro_mean"]),
+            xytext=xytext,
+            textcoords="offset points",
+            ha="right",
             va="center",
             fontsize=6.9,
             linespacing=0.92,
             zorder=5,
+            arrowprops={
+                "arrowstyle": "-",
+                "color": "#555555",
+                "linewidth": 0.65,
+                "shrinkA": 2,
+                "shrinkB": 0,
+                "connectionstyle": "arc3,rad=0.0",
+            },
         )
-        (x0, y0), (x1, y1) = opts["line"]
-        ax1.plot([x0, x1], [y0, y1], color="#555555", linewidth=0.65, zorder=4)
     algo_handles = [
         plt.Line2D([0], [0], marker="o", color=ALGO_COLORS[a], lw=0, markersize=4.5, label=a)
         for a in ALGORITHMS
@@ -602,6 +644,8 @@ def figure_05_external(source_dir: Path, dirs: dict[str, Path], qa: dict) -> Non
         "source": ["FinalEval_Test_External_Summary.csv", "Generalization_Ranking_Spearman.csv"],
         "spearman_internal_external": float(row["Spearman_Rho"]),
         "p": float(row["P_Value"]),
+        "internal_test_best": leaders["internal_test_best"],
+        "external_val_best": leaders["external_val_best"],
     }
 
 
@@ -620,7 +664,13 @@ def confusion_matrix_for(df: pd.DataFrame, model: str) -> pd.DataFrame:
 
 def figure_06_confusion(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
     df = read_csv(source_dir, "FinalEval_Test_External_Confusion_Matrices_Long.csv")
-    models = ["LightGBM-Default", "RF-Default"]
+    models = ordered_leader_models(source_dir)
+    if len(models) == 1:
+        summary = read_csv(source_dir, "FinalEval_Test_External_Summary.csv").sort_values("Val_F1_Macro_mean", ascending=False)
+        for candidate in summary["Model"]:
+            if candidate not in models:
+                models.append(str(candidate))
+                break
     titles = ["(a)", "(b)"]
     fig, axes = plt.subplots(1, 2, figsize=(5.6, 2.8), constrained_layout=True)
     for ax, model, title in zip(axes, models, titles):
@@ -634,17 +684,17 @@ def figure_06_confusion(source_dir: Path, dirs: dict[str, Path], qa: dict) -> No
     plt.close(fig)
 
     fig_opt, ax_opt = plt.subplots(figsize=(2.8, 2.8), constrained_layout=True)
-    mat = confusion_matrix_for(df, "XGBoost-SSA")
+    mat = confusion_matrix_for(df, "LightGBM-Default")
     draw_heatmap(ax_opt, mat, cmap=BLUE_CMAP, vmin=0, vmax=1, fmt="{:.2f}", xrotation=0)
     ax_opt.set_title("(c)", loc="left", fontweight="bold", pad=6)
     ax_opt.set_xlabel("Predicted class")
     ax_opt.set_ylabel("True class")
-    save_panel(fig_opt, ax_opt, "Fig06_optional_XGBoost-SSA_confusion", dirs)
+    save_panel(fig_opt, ax_opt, "Fig06_optional_LightGBM-Default_confusion", dirs)
     plt.close(fig_opt)
     qa["Fig06"] = {
         "source": "FinalEval_Test_External_Confusion_Matrices_Long.csv",
         "models": models,
-        "optional_panel": "XGBoost-SSA",
+        "optional_panel": None,
     }
 
 
@@ -799,23 +849,30 @@ def shap_contrast(source_dir: Path) -> pd.DataFrame:
     return df
 
 
-def shap_pivot(source_dir: Path) -> pd.DataFrame:
+def shap_pivot(source_dir: Path) -> tuple[pd.DataFrame, list[str], dict[str, str]]:
     df = shap_contrast(source_dir)
+    models = ordered_leader_models(source_dir)
     pivot = df.pivot_table(index="Feature", columns="Model", values="MeanAbsSHAP_ExternalVal", aggfunc="mean")
-    pivot = pivot[["LightGBM-Default", "RF-Default"]]
-    return pivot.sort_values("LightGBM-Default", ascending=False)
+    missing = [m for m in models if m not in pivot.columns]
+    if missing:
+        raise KeyError(f"SHAP_Generalization_Contrast.csv lacks leader model columns: {missing}")
+    pivot = pivot[models]
+    external_model = models[0]
+    return pivot.sort_values(external_model, ascending=False), models, shap_role_models(source_dir)
 
 
 def figure_09_shap(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
-    pivot = shap_pivot(source_dir)
+    pivot, models, role_models = shap_pivot(source_dir)
     ranks = pivot.rank(ascending=False, method="first").astype(int)
     display_index = [feature_label(f) for f in pivot.index]
-    fig, axes = plt.subplots(1, 2, figsize=(6.45, 3.25), constrained_layout=True, sharey=True)
+    fig, axes = plt.subplots(1, len(models), figsize=(6.45, 3.25), constrained_layout=True, sharey=True)
+    axes = np.atleast_1d(axes)
+    colors = [ALGO_COLORS.get(m.split("-")[0], "#555555") for m in models]
     for ax, model, color, panel in zip(
         axes,
-        ["LightGBM-Default", "RF-Default"],
-        ["#009E73", "#0072B2"],
-        ["(a)", "(b)"],
+        models,
+        colors,
+        ["(a)", "(b)", "(c)"],
     ):
         vals = pivot[model]
         y = np.arange(len(vals))
@@ -844,6 +901,8 @@ def figure_09_shap(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
         "source": "SHAP_Generalization_Contrast.csv",
         "values": pivot.to_dict(),
         "ranks": ranks.to_dict(),
+        "models": models,
+        "roles": role_models,
     }
 
 
@@ -852,35 +911,33 @@ def feature_ranks(values: pd.Series) -> pd.Series:
 
 
 def figure_10_rank_migration(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
-    pivot = shap_pivot(source_dir)
-    ranks = pd.DataFrame(
-        {
-            "LightGBM-Default": feature_ranks(pivot["LightGBM-Default"]),
-            "RF-Default": feature_ranks(pivot["RF-Default"]),
-        }
-    ).sort_values("LightGBM-Default")
+    pivot, models, role_models = shap_pivot(source_dir)
+    ranks = pd.DataFrame({model: feature_ranks(pivot[model]) for model in models}).sort_values(models[0])
+    x = np.arange(len(models))
     fig, ax = plt.subplots(figsize=(5.7, 4.3), constrained_layout=True)
     for feat, row in ranks.iterrows():
         color = FEATURE_COLORS.get(feat, "#555555")
         label = feature_label(feat)
-        ax.plot([0, 1], [row["LightGBM-Default"], row["RF-Default"]], color=color, marker="o", markersize=5.0, linewidth=1.8)
-        ax.text(-0.04, row["LightGBM-Default"], label, ha="right", va="center", fontsize=8.0, color=color)
-        ax.text(1.04, row["RF-Default"], label, ha="left", va="center", fontsize=8.0, color=color)
-    ax.set_xlim(-0.22, 1.22)
+        ax.plot(x, [row[m] for m in models], color=color, marker="o", markersize=5.0, linewidth=1.8)
+        ax.text(x[0] - 0.04, row[models[0]], label, ha="right", va="center", fontsize=8.0, color=color)
+        ax.text(x[-1] + 0.04, row[models[-1]], label, ha="left", va="center", fontsize=8.0, color=color)
+    ax.set_xlim(-0.22, len(models) - 1 + 0.22)
     ax.set_ylim(8.5, 0.5)
-    ax.set_xticks([0, 1])
-    ax.set_xticklabels(["LightGBM-Default", "RF-Default"])
+    ax.set_xticks(x)
+    ax.set_xticklabels(models)
     ax.set_yticks(range(1, 9))
     ax.set_ylabel("Within-model SHAP rank")
     box_axes(ax, grid_axis="y")
     save_fig(fig, "Fig10_shap_rank_migration", dirs)
     plt.close(fig)
-    qa["Fig10"] = {"source": "SHAP_Generalization_Contrast.csv", "ranks": ranks.to_dict()}
+    qa["Fig10"] = {"source": "SHAP_Generalization_Contrast.csv", "ranks": ranks.to_dict(), "models": models, "roles": role_models}
 
 
 def figure_11_risk(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
-    pivot = shap_pivot(source_dir)
-    shap_vals = pivot["LightGBM-Default"].rename("LightGBM_SHAP")
+    pivot, models, role_models = shap_pivot(source_dir)
+    external_model = models[0]
+    shap_col = "ExternalBest_SHAP"
+    shap_vals = pivot[external_model].rename(shap_col)
     ks = read_csv(source_dir, "Dataset_DomainShift_KS.csv")
     ks = ks[(ks["Reference_Split"].eq("train")) & (ks["Compared_Split"].eq("external_val")) & (ks["Feature"].isin(FEATURES))]
     expanded_path = data_file(source_dir, "Table_4-9_DomainShift_CoreFeatures_Expanded.csv")
@@ -896,15 +953,15 @@ def figure_11_risk(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
     cohen = expanded.set_index("Feature")["Cohen's d"]
     df = pd.concat([shap_vals, ks.set_index("Feature")["KS_Statistic"], cohen], axis=1).dropna()
 
-    shap_sorted = np.sort(df["LightGBM_SHAP"].to_numpy())
+    shap_sorted = np.sort(df[shap_col].to_numpy())
     shap_low_med = (shap_sorted[1] + shap_sorted[2]) / 2
     shap_med_high = (shap_sorted[3] + shap_sorted[4]) / 2
     ks_sorted = np.sort(df["KS_Statistic"].to_numpy())
     ks_low_med = (ks_sorted[1] + ks_sorted[2]) / 2
     ks_med_high = (ks_sorted[3] + ks_sorted[4]) / 2
 
-    xmin, xmax = 0.125, 0.298
-    ymin, ymax = 0.085, 0.535
+    xmin, xmax = 0.135, 0.330
+    ymin, ymax = 0.06, max(0.74, float(df[shap_col].max()) * 1.12)
     fig, ax = plt.subplots(figsize=(6.25, 4.75), constrained_layout=True)
     ax.axvspan(xmin, ks_low_med, color="#E7F2EC", zorder=0)
     ax.axvspan(ks_med_high, xmax, color="#FDEAE8", zorder=0)
@@ -929,36 +986,22 @@ def figure_11_risk(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
     offsets = {
         "x5": (10, 4),
         "x7": (12, 5),
-        "x1": (9, 0),
+        "x1": (9, 4),
         "x2": (9, -2),
-        "x6": (12, 0),
+        "x6": (12, -3),
         "x8": (9, -2),
-        "x3": (22, 12),
-        "x4": (-42, -10),
+        "x3": (15, 0),
+        "x4": (-13, 0),
     }
     for feat, row in df.iterrows():
         size = 690 * abs(float(row["Cohen's d"])) + 52
         category = shift_category(float(row["KS_Statistic"]))
         color = shift_colors[category]
-        ax.scatter(row["KS_Statistic"], row["LightGBM_SHAP"], s=size, color=color, edgecolor="white", linewidth=1.0, zorder=3, alpha=0.94)
-        if feat == "x4":
-            line_y = row["LightGBM_SHAP"]
-            circle_left = row["KS_Statistic"] - 0.0054
-            line_left = circle_left - 0.0030
-            ax.plot([line_left, circle_left], [line_y, line_y], color="#777777", linewidth=0.6, zorder=4)
-            ax.text(line_left - 0.0008, line_y, r"$\mathrm{Mg}^{2\!+}$", ha="right", va="center", fontsize=8.1, zorder=4)
-            continue
-        if feat == "x3":
-            line_y = row["LightGBM_SHAP"]
-            circle_right = row["KS_Statistic"] + 0.0054
-            line_right = circle_right + 0.0030
-            ax.plot([circle_right, line_right], [line_y, line_y], color="#777777", linewidth=0.6, zorder=4)
-            ax.text(line_right + 0.0008, line_y, r"$\mathrm{Ca}^{2\!+}$", ha="left", va="center", fontsize=8.1, zorder=4)
-            continue
+        ax.scatter(row["KS_Statistic"], row[shap_col], s=size, color=color, edgecolor="white", linewidth=1.0, zorder=3, alpha=0.94)
         dx, dy = offsets.get(feat, (7, 0))
         ax.annotate(
             feature_label(feat),
-            (row["KS_Statistic"], row["LightGBM_SHAP"]),
+            (row["KS_Statistic"], row[shap_col]),
             xytext=(dx, dy),
             textcoords="offset points",
             ha="left" if dx >= 0 else "right",
@@ -966,7 +1009,7 @@ def figure_11_risk(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
             fontsize=8.1,
         )
     ax.set_xlabel("Training-external KS statistic")
-    ax.set_ylabel(r"LightGBM-Default mean(|SHAP|)")
+    ax.set_ylabel(rf"{external_model} mean(|SHAP|)")
     box_axes(ax)
     ax.set_xlim(xmin, xmax)
     ax.set_ylim(ymin, ymax)
@@ -977,7 +1020,7 @@ def figure_11_risk(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
     ax.legend(handles=handles, loc="lower left", frameon=False)
     save_fig(fig, "Fig11_joint_shap_ks_risk_map", dirs)
     plt.close(fig)
-    qa["Fig11"] = {"source": ["SHAP_Generalization_Contrast.csv", "Dataset_DomainShift_KS.csv", "Table_4-9_DomainShift_CoreFeatures_Expanded.csv"], "values": df.to_dict()}
+    qa["Fig11"] = {"source": ["SHAP_Generalization_Contrast.csv", "Dataset_DomainShift_KS.csv", "Table_4-9_DomainShift_CoreFeatures_Expanded.csv"], "values": df.to_dict(), "external_model": external_model, "roles": role_models}
 
 
 def supp_panel_label(ax: plt.Axes, label: str) -> None:
@@ -986,12 +1029,16 @@ def supp_panel_label(ax: plt.Axes, label: str) -> None:
 
 def supp_figure_s1(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
     raw = read_csv(source_dir, "FinalEval_Test_External_Raw.csv")
-    models = ["LightGBM-Default", "XGBoost-SSA"]
+    summary = read_csv(source_dir, "FinalEval_Test_External_Summary.csv")
+    external_best = str(summary.loc[summary["Val_F1_Macro_mean"].idxmax(), "Model"])
+    lightgbm_rows = summary[summary["Algorithm"].eq("LightGBM")].sort_values("Val_F1_Macro_mean", ascending=False)
+    lightgbm_best = str(lightgbm_rows.iloc[0]["Model"]) if len(lightgbm_rows) else external_best
+    models = list(dict.fromkeys([lightgbm_best, external_best]))
     sub = raw[raw["Model"].isin(models)].copy()
     wide = sub.pivot_table(index="Run_Seed", columns="Model", values="Val_F1_Macro", aggfunc="first").dropna()
-    lgb = wide["LightGBM-Default"].to_numpy(float)
-    xgb = wide["XGBoost-SSA"].to_numpy(float)
-    diff = lgb - xgb
+    left = wide[models[0]].to_numpy(float)
+    right = wide[models[-1]].to_numpy(float)
+    diff = left - right
 
     rng = np.random.default_rng(20260608)
     boot = np.array([rng.choice(diff, size=len(diff), replace=True).mean() for _ in range(10000)])
@@ -1000,10 +1047,10 @@ def supp_figure_s1(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
     fig, axes = plt.subplots(1, 3, figsize=(7.6, 2.6), constrained_layout=True)
     ax = axes[0]
     bp = ax.boxplot(
-        [lgb, xgb],
+        [left, right],
         patch_artist=True,
         widths=0.46,
-        tick_labels=["LightGBM-\nDefault", "XGBoost-\nSSA"],
+        tick_labels=[clean_model_label(m) for m in models],
         medianprops={"color": "#D55E00", "linewidth": 1.0},
         boxprops={"linewidth": 0.8},
         whiskerprops={"linewidth": 0.8},
@@ -1013,7 +1060,7 @@ def supp_figure_s1(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
     for patch, color in zip(bp["boxes"], ["#9ECAE1", "#C6DBEF"]):
         patch.set_facecolor(color)
         patch.set_alpha(0.9)
-    for i, vals in enumerate([lgb, xgb], start=1):
+    for i, vals in enumerate([left, right], start=1):
         jitter = rng.normal(i, 0.025, size=len(vals))
         ax.scatter(jitter, vals, s=9, color="#4D4D4D", alpha=0.55, linewidth=0, zorder=3)
     supp_panel_label(ax, "(a)")

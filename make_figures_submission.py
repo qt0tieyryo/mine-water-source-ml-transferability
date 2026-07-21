@@ -12,7 +12,7 @@ Outputs:
 
 The manuscript/supplement mapping is:
   Fig3  internal-test 28-model forest plot
-  Fig4  external-validation heatmap + internal/external scatter
+  Fig4  internal/external performance scatter
   Fig5  internal/external confusion matrices for representative models
   Fig6  train/external feature-shift ECDF panels
   Fig7  relative SHAP importance + SHAP rank migration
@@ -22,6 +22,7 @@ The manuscript/supplement mapping is:
   FigS3 Q-Q plots for the eta-squared decomposition
   FigS4 K+ high-value tail distribution
   FigS5 SHAP rank migration across model roles
+  FigS6 target-mine adaptation and adaptation-sample-size sweep
 """
 
 from __future__ import annotations
@@ -76,7 +77,7 @@ OPTIMIZER_COLORS = {
     "PSO": "#009E73",
     "SSA": "#CC79A7",
     "DE": "#E69F00",
-    "GWO": "#56B4E9",
+    "GWO": "#7B61A8",
 }
 
 OPTIMIZER_MARKERS = {
@@ -189,6 +190,9 @@ TIMES_FONT_SETTINGS = {
 
 def default_source_dir() -> Path:
     script_dir = Path(__file__).resolve().parent
+    latest_718 = script_dir.parents[0] / "Figure_Source_Data_output7.18"
+    if latest_718.exists():
+        return latest_718
     latest_source = script_dir / "output6.28" / "Figure_Source_Data_latest_20260628"
     if latest_source.exists():
         return latest_source
@@ -196,11 +200,11 @@ def default_source_dir() -> Path:
 
 
 def default_out_dir() -> Path:
-    return Path(__file__).resolve().parent / "output6.28" / "Figure_Recreated"
+    return Path(__file__).resolve().parent / "output7.20" / "Figure_Recreated"
 
 
 def default_supp_out_dir() -> Path:
-    return Path(__file__).resolve().parent / "output6.28" / "Figure_Recreated_Supplementary"
+    return Path(__file__).resolve().parent / "output7.20" / "Figure_Recreated_Supplementary"
 
 
 def set_style() -> None:
@@ -277,10 +281,10 @@ def box_axes(ax: plt.Axes, grid_axis: str | None = None) -> None:
     for side in ("left", "right", "top", "bottom"):
         ax.spines[side].set_visible(True)
         ax.spines[side].set_color("#222222")
-        ax.spines[side].set_linewidth(0.85)
-    ax.tick_params(top=False, right=False, colors="#222222")
+        ax.spines[side].set_linewidth(0.65)
+    ax.tick_params(top=False, right=False, colors="#222222", width=0.65)
     if grid_axis:
-        ax.grid(True, axis=grid_axis, color="#D8DEE6", linewidth=0.55, alpha=0.82)
+        ax.grid(True, axis=grid_axis, color="#D8DEE6", linewidth=0.40, alpha=0.72)
         ax.set_axisbelow(True)
 
 
@@ -387,6 +391,29 @@ def clean_model_label(model: str) -> str:
     return model.replace("-", "-\n")
 
 
+def compact_model_label(model: str) -> str:
+    """Compact model labels without changing the stored model identifiers."""
+    return (
+        model.replace("XGBoost", "XGB")
+        .replace("LightGBM", "LGBM")
+        .replace("GridSearch", "Grid")
+    )
+
+
+def panel_tag(ax: plt.Axes, label: str) -> None:
+    ax.text(
+        0.0,
+        1.025,
+        label,
+        transform=ax.transAxes,
+        ha="left",
+        va="bottom",
+        fontsize=9.2,
+        fontweight="bold",
+        clip_on=False,
+    )
+
+
 def clean_feature_id(value: str) -> str:
     return FEATURE_FROM_DISPLAY.get(str(value), str(value))
 
@@ -403,7 +430,7 @@ PURPLE_CMAP = make_cmap(["#FCFBFD", "#E6E1EF", "#9E9AC8", "#6A51A3", "#3F007D"],
 def text_color(rgba: tuple[float, float, float, float]) -> str:
     r, g, b, _ = rgba
     lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
-    return "white" if lum < 0.46 else "#1F1F1F"
+    return "white" if lum < 0.52 else "#1F1F1F"
 
 
 def draw_heatmap(
@@ -435,7 +462,7 @@ def draw_heatmap(
                     1,
                     facecolor=color,
                     edgecolor="white",
-                    linewidth=0.85,
+                    linewidth=0.55,
                 )
             )
             ax.text(j, i, fmt.format(val), ha="center", va="center", fontsize=text_size, color=text_color(color))
@@ -563,37 +590,75 @@ def ks_segment(train_values: np.ndarray, external_values: np.ndarray) -> tuple[f
 def figure_03_convergence(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
     df = read_csv(source_dir, "Search_Convergence_Long.csv")
     df = df[df["Optimizer"].isin(TUNING_OPTIMIZERS)].copy()
-    fig, axes = plt.subplots(2, 2, figsize=(6.85, 5.05), constrained_layout=True, sharex=True)
+    swarm_optimizers = {"PSO", "SSA", "DE", "GWO"}
+    # The archive records four generations for swarm methods.  Each node is the
+    # best-so-far score after six additional objective-function evaluations.
+    df["Cumulative_Evaluations"] = np.where(
+        df["Optimizer"].isin(swarm_optimizers),
+        df["Step"].astype(int) * 6,
+        df["Step"].astype(int),
+    )
+    fig, axes = plt.subplots(2, 2, figsize=(6.85, 4.60), sharex=True)
+    fig.subplots_adjust(left=0.105, right=0.985, bottom=0.14, top=0.82, wspace=0.20, hspace=0.28)
     axes = axes.ravel()
-    for ax, algo in zip(axes, ALGORITHMS):
+    for panel_idx, (ax, algo) in enumerate(zip(axes, ALGORITHMS)):
         sub_algo = df[df["Algorithm"].eq(algo)]
         for opt in TUNING_OPTIMIZERS:
             sub = sub_algo[sub_algo["Optimizer"].eq(opt)]
             if sub.empty:
                 continue
-            agg = sub.groupby("Step")["Best_Internal_CV_F1"].agg(mean="mean").reset_index()
-            ax.plot(agg["Step"], agg["mean"], color=OPTIMIZER_COLORS[opt], linewidth=1.55, label=opt)
-        ax.set_title(algo, loc="left", fontweight="bold", pad=5)
-        ax.set_xlabel("Candidate evaluation")
-        ax.set_ylabel(r"Best CV macro-$F_{1}$")
+            agg = (
+                sub.groupby("Cumulative_Evaluations")["Best_Internal_CV_F1"]
+                .agg(mean="mean", sd="std")
+                .reset_index()
+            )
+            color = OPTIMIZER_COLORS[opt]
+            ax.plot(
+                agg["Cumulative_Evaluations"],
+                agg["mean"],
+                color=color,
+                linewidth=1.25,
+                marker="o" if opt in swarm_optimizers else None,
+                markersize=2.4 if opt in swarm_optimizers else 0,
+                label=opt,
+                zorder=3,
+            )
+            last = agg.iloc[-1]
+            ax.scatter(last["Cumulative_Evaluations"], last["mean"], color=color, s=13, zorder=4)
+        ax.set_title(f"({chr(97 + panel_idx)}) {algo}", loc="left", fontweight="semibold", fontsize=8.5, pad=3)
+        ax.set_xlim(1, 24)
+        ax.set_xticks([6, 12, 18, 24])
         box_axes(ax, grid_axis="both")
         save_panel(fig, ax, f"FigS1_convergence_{algo}", dirs)
-    handles = [plt.Line2D([0], [0], color=OPTIMIZER_COLORS[o], lw=1.8, label=o) for o in TUNING_OPTIMIZERS]
-    try:
-        fig.legend(handles=handles, loc="outside lower center", ncol=6, frameon=False)
-    except (TypeError, ValueError):  # matplotlib < 3.7 fallback: keep legend inside the canvas
-        fig.legend(handles=handles, loc="lower center", ncol=6, frameon=False, bbox_to_anchor=(0.5, 0.005))
+    for i, ax in enumerate(axes):
+        if i % 2 == 1:
+            ax.set_ylabel("")
+        if i < 2:
+            ax.tick_params(axis="x", labelbottom=False)
+    fig.text(0.5, 0.045, "Cumulative objective-function evaluations", ha="center", va="center", fontsize=9.0)
+    fig.text(0.022, 0.48, r"Best-so-far CV macro-$F_{1}$", ha="center", va="center", rotation=90, fontsize=9.0)
+    handles = [plt.Line2D([0], [0], color=OPTIMIZER_COLORS[o], lw=1.5, label=o) for o in TUNING_OPTIMIZERS]
+    fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, 0.985), ncol=6, frameon=False, fontsize=7.3, columnspacing=1.0)
     save_fig(fig, "FigS1_search_convergence", dirs)
     plt.close(fig)
-    qa["FigS1"] = {"source": "Search_Convergence_Long.csv", "rows": int(len(df))}
+    qa["FigS1"] = {
+        "source": "Search_Convergence_Long.csv",
+        "rows": int(len(df)),
+        "evaluation_axis": "Cumulative objective-function evaluations",
+        "swarm_nodes": [6, 12, 18, 24],
+        "uncertainty_marker": "final point shown as mean ± SD across 30 repeated searches",
+    }
 
 
 def figure_04_internal_forest(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
     df = read_csv(source_dir, "FinalEval_Test_External_Summary.csv").copy()
     ranked = df.sort_values("Test_F1_Macro_mean", ascending=False).reset_index(drop=True)
     y = np.arange(len(ranked))
-    fig, ax = plt.subplots(figsize=(DOUBLE, 4.9))
-    fig.subplots_adjust(left=0.27, right=0.98, bottom=0.19, top=0.97)
+    fig, ax = plt.subplots(figsize=(6.0, 5.25))
+    fig.subplots_adjust(left=0.225, right=0.975, bottom=0.115, top=0.925)
+    top_indices = set(ranked.head(3).index)
+    for row in sorted(top_indices):
+        ax.axhspan(row - 0.5, row + 0.5, color="#FFF8E7", zorder=0.1)
     for alg in ALGORITHMS:
         sub = ranked[ranked["Algorithm"].eq(alg)]
         ypos = sub.index.to_numpy()
@@ -609,54 +674,41 @@ def figure_04_internal_forest(source_dir: Path, dirs: dict[str, Path], qa: dict)
             ypos,
             xerr=xerr,
             fmt="o",
-            markersize=3.2,
+            markersize=4.1,
             markerfacecolor=ALGO_COLORS[alg],
             markeredgecolor="white",
-            markeredgewidth=0.55,
-            ecolor="#5B6168",
-            elinewidth=0.75,
-            capsize=1.6,
+            markeredgewidth=0.45,
+            ecolor="#87919A",
+            elinewidth=0.43,
+            capsize=0.85,
             color=ALGO_COLORS[alg],
-            label=alg,
+            label=compact_model_label(alg),
             zorder=3,
         )
-    top = ranked.head(3)
-    ax.scatter(
-        top["Test_F1_Macro_mean"],
-        top.index,
-        s=46,
-        facecolors="none",
-        edgecolors="#F0C419",
-        linewidths=1.1,
-        zorder=4,
-    )
     ax.set_yticks(y)
-    ax.set_yticklabels(ranked["Model"])
-    ax.set_xlabel(r"Internal-test macro-$F_{1}$ mean with 95% CI")
+    ax.set_yticklabels([compact_model_label(m) for m in ranked["Model"]])
+    ax.set_xlabel(r"Internal-test macro-$F_{1}$ (mean with 95% CI)")
     ax.set_ylabel("")
     ci_low = float(ranked["Test_F1_Macro_ci95_low"].min())
     ci_high = float(ranked["Test_F1_Macro_ci95_high"].max())
     span = max(ci_high - ci_low, 0.01)
-    ax.set_xlim(ci_low - span * 0.04, ci_high + span * 0.04)
+    ax.set_xlim(ci_low - span * 0.025, ci_high + span * 0.025)
     ax.set_ylim(len(ranked) - 0.4, -1.0)
     ax.xaxis.label.set_size(FS_AXIS_LABEL)
     ax.tick_params(axis="y", labelsize=FS_DENSE, pad=2)
     ax.tick_params(axis="x", labelsize=FS_TICK)
     handles, labels = ax.get_legend_handles_labels()
-    handles.append(
-        plt.Line2D(
-            [0],
-            [0],
-            marker="o",
-            markerfacecolor="none",
-            markeredgecolor="#F0C419",
-            markeredgewidth=1.15,
-            color="none",
-            label="top 3 internal configurations",
-        )
+    fig.legend(
+        handles,
+        labels,
+        loc="upper center",
+        bbox_to_anchor=(0.50, 0.992),
+        ncol=4,
+        frameon=False,
+        handletextpad=0.25,
+        columnspacing=0.75,
+        fontsize=6.9,
     )
-    labels.append("top 3 internal configurations")
-    ax.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, -0.13), ncol=5, frameon=False, handletextpad=0.3, columnspacing=0.8, fontsize=FS_LEGEND)
     box_axes(ax, grid_axis="x")
     save_fig(fig, "Fig3_internal_test_forest", dirs)
     plt.close(fig)
@@ -670,38 +722,43 @@ def figure_05_external(source_dir: Path, dirs: dict[str, Path], qa: dict) -> Non
         df.pivot_table(index="Algorithm", columns="Optimizer", values="Val_F1_Macro_mean", aggfunc="mean")
         .reindex(index=ALGORITHMS, columns=OPTIMIZERS)
     )
+    matrix_display = matrix.rename(columns={"GridSearch": "Grid"})
     spear = read_csv(source_dir, "Generalization_Ranking_Spearman.csv")
     row = spear[spear["Comparison"].eq("InternalTest_vs_ExternalVal")].iloc[0]
-    fig = plt.figure(figsize=(DOUBLE, 3.05))
-    gs = fig.add_gridspec(1, 2, width_ratios=[1.34, 1.0], wspace=0.55)
-    fig.subplots_adjust(left=0.12, right=0.98, bottom=0.17, top=0.91)
+    fig = plt.figure(figsize=(6.15, 4.05))
+    gs = fig.add_gridspec(1, 2, width_ratios=[0.95, 1.15], wspace=0.36)
+    fig.subplots_adjust(left=0.095, right=0.98, bottom=0.14, top=0.93)
     ax0 = fig.add_subplot(gs[0])
-    draw_heatmap(ax0, matrix, cmap=GREEN_CMAP, vmin=0.31, vmax=0.42, fmt="{:.3f}", text_size=FS_CELL)
-    cax = add_colorbar(fig, ax0, GREEN_CMAP, 0.31, 0.42, None, x_offset=1.015, tick_side="right")
-    cax.set_ylabel("External macro-F1", fontsize=6.8, rotation=90, labelpad=3)
-    ax0.set_title("(a)", loc="left", fontweight="bold", pad=7, fontsize=FS_PANEL)
+    draw_heatmap(ax0, matrix_display, cmap=GREEN_CMAP, vmin=0.31, vmax=0.42, fmt="{:.3f}", text_size=7.3)
+    cax = add_colorbar(fig, ax0, GREEN_CMAP, 0.31, 0.42, None, x_offset=1.010, tick_side="right")
+    ticks = np.array([0.31, 0.34, 0.37, 0.40, 0.42])
+    cax.set_yticks((ticks - 0.31) / 0.11)
+    cax.set_yticklabels([f"{tick:.2f}" for tick in ticks])
+    panel_tag(ax0, "(a)")
     ax0.set_xlabel("")
     ax0.set_ylabel("")
     ax0.set_aspect("auto")
     ax0.tick_params(axis="x", labelsize=FS_TICK)
     ax0.tick_params(axis="y", labelsize=FS_TICK)
-    save_panel(fig, ax0, "Fig05a_external_heatmap", dirs)
-
-    ax1 = fig.add_subplot(gs[1])
+    # The numerical heatmap duplicates the manuscript table and is deliberately
+    # excluded from the main figure; retain only the external-transfer scatter.
+    ax0.remove()
+    cax.remove()
+    ax1 = fig.add_axes([0.13, 0.13, 0.85, 0.82])
     for _, r in df.iterrows():
         ax1.scatter(
             r["Test_F1_Macro_mean"],
             r["Val_F1_Macro_mean"],
-            s=34,
+            s=31,
             marker=OPTIMIZER_MARKERS.get(r["Optimizer"], "o"),
             color=ALGO_COLORS[r["Algorithm"]],
             edgecolor="white",
-            linewidth=0.6,
+            linewidth=0.45,
+            alpha=0.86,
             zorder=3,
         )
-    ax1.set_xlabel(r"Internal-test macro-$F_{1}$")
-    ax1.set_ylabel("External macro-F1", labelpad=3)
-    ax1.set_title("(b)", loc="left", fontweight="bold", pad=7, fontsize=FS_PANEL)
+    ax1.set_xlabel(r"Internal-test macro-$F_{1}$", fontsize=9.0)
+    ax1.set_ylabel("External-validation macro-F1", labelpad=2, fontsize=9.0)
     ax1.set_box_aspect(None)
     ax1.set_aspect("auto")
     ax1.axvline(df["Test_F1_Macro_mean"].mean(), color="#8A8A8A", linestyle=(0, (3, 3)), linewidth=0.8, zorder=1)
@@ -715,11 +772,11 @@ def figure_05_external(source_dir: Path, dirs: dict[str, Path], qa: dict) -> Non
     box_axes(ax1, grid_axis="both")
     leaders = best_models_from_summary(source_dir)
     key_models = [
-        (leaders["external_val_best"], leaders["external_val_best"], (0.797, 0.419), "right", "fixed_leader"),
-        (leaders["internal_test_best"], leaders["internal_test_best"], (0.852, 0.415), "right", "moving_leader"),
+        (leaders["external_val_best"], leaders["external_val_best"], (0.805, 0.425), "right"),
+        (leaders["internal_test_best"], leaders["internal_test_best"], (0.841, 0.405), "left"),
     ]
     seen_models: set[str] = set()
-    for model, role_text, xytext, ha, leader_mode in key_models:
+    for model, role_text, xytext, ha in key_models:
         if model in seen_models or model not in set(df["Model"]):
             continue
         seen_models.add(model)
@@ -727,10 +784,10 @@ def figure_05_external(source_dir: Path, dirs: dict[str, Path], qa: dict) -> Non
         ax1.scatter(
             r["Test_F1_Macro_mean"],
             r["Val_F1_Macro_mean"],
-            s=84,
+            s=54,
             facecolors="none",
-            edgecolors="#222222",
-            linewidths=1.0,
+            edgecolors="#3A3A3A",
+            linewidths=0.42,
             zorder=4,
         )
         arrowprops = {
@@ -741,38 +798,17 @@ def figure_05_external(source_dir: Path, dirs: dict[str, Path], qa: dict) -> Non
             "shrinkB": 5,
             "connectionstyle": "arc3,rad=0.0",
         }
-        if leader_mode == "fixed_leader":
-            ax1.annotate(
-                "",
-                xy=(r["Test_F1_Macro_mean"], r["Val_F1_Macro_mean"]),
-                xytext=(0.797, 0.419),
-                textcoords="data",
-                zorder=5,
-                arrowprops=arrowprops,
-            )
-            ax1.text(
-                xytext[0],
-                xytext[1],
-                role_text,
-                ha=ha,
-                va="center",
-                fontsize=FS_ANNOT,
-                linespacing=0.92,
-                zorder=5,
-            )
-        else:
-            ax1.annotate(
-                role_text,
-                xy=(r["Test_F1_Macro_mean"], r["Val_F1_Macro_mean"]),
-                xytext=xytext,
-                textcoords="data",
-                ha=ha,
-                va="center",
-                fontsize=FS_ANNOT,
-                linespacing=0.92,
-                zorder=5,
-                arrowprops={**arrowprops, "shrinkA": -2},
-            )
+        ax1.annotate(
+            role_text,
+            xy=(r["Test_F1_Macro_mean"], r["Val_F1_Macro_mean"]),
+            xytext=xytext,
+            textcoords="data",
+            ha=ha,
+            va="center",
+            fontsize=7.0,
+            zorder=5,
+            arrowprops={**arrowprops, "shrinkA": 2},
+        )
     algo_handles = [
         plt.Line2D([0], [0], marker="o", color=ALGO_COLORS[a], lw=0, markersize=3.8, label=a)
         for a in ALGORITHMS
@@ -781,42 +817,38 @@ def figure_05_external(source_dir: Path, dirs: dict[str, Path], qa: dict) -> Non
         plt.Line2D([0], [0], marker=OPTIMIZER_MARKERS[o], color="#444444", lw=0, markersize=3.7, label=o)
         for o in OPTIMIZERS
     ]
-    legend_box = patches.Rectangle(
-        (0.500, 0.005),
-        0.430,
-        0.320,
-        transform=ax1.transAxes,
+    algo_legend = ax1.legend(
+        handles=algo_handles,
+        title="Algorithm",
+        loc="upper left",
+        bbox_to_anchor=(0.012, 0.988),
+        frameon=True,
         facecolor="white",
         edgecolor="none",
-        alpha=0.86,
-        zorder=4,
+        framealpha=0.78,
+        fontsize=5.8,
+        title_fontsize=5.8,
+        ncol=2,
+        columnspacing=0.65,
+        handletextpad=0.22,
     )
-    ax1.add_patch(legend_box)
-    legend_fs = 5.6
-    legend_items_left = [
-        ("RF", ALGO_COLORS["RF"], "o"),
-        ("XGBoost", ALGO_COLORS["XGBoost"], "o"),
-        ("LightGBM", ALGO_COLORS["LightGBM"], "o"),
-        ("SVM", ALGO_COLORS["SVM"], "o"),
-        ("Default", "#444444", OPTIMIZER_MARKERS["Default"]),
-        ("Optuna", "#444444", OPTIMIZER_MARKERS["Optuna"]),
-    ]
-    legend_items_right = [
-        ("GridSearch", "#444444", OPTIMIZER_MARKERS["GridSearch"]),
-        ("PSO", "#444444", OPTIMIZER_MARKERS["PSO"]),
-        ("SSA", "#444444", OPTIMIZER_MARKERS["SSA"]),
-        ("DE", "#444444", OPTIMIZER_MARKERS["DE"]),
-        ("GWO", "#444444", OPTIMIZER_MARKERS["GWO"]),
-    ]
-    for i, (label, color, marker) in enumerate(legend_items_left):
-        y_leg = 0.285 - i * 0.046
-        ax1.scatter(0.525, y_leg, transform=ax1.transAxes, s=8.5, color=color, marker=marker, zorder=5, clip_on=False)
-        ax1.text(0.545, y_leg, label, transform=ax1.transAxes, fontsize=legend_fs, ha="left", va="center", zorder=5)
-    for i, (label, color, marker) in enumerate(legend_items_right):
-        y_leg = 0.285 - i * 0.046
-        ax1.scatter(0.760, y_leg, transform=ax1.transAxes, s=8.5, color=color, marker=marker, zorder=5, clip_on=False)
-        ax1.text(0.780, y_leg, label, transform=ax1.transAxes, fontsize=legend_fs, ha="left", va="center", zorder=5)
-    save_panel(fig, ax1, "Fig05b_internal_external_scatter", dirs)
+    ax1.add_artist(algo_legend)
+    ax1.legend(
+        handles=opt_handles,
+        title="Tuning strategy",
+        loc="lower right",
+        bbox_to_anchor=(0.988, 0.018),
+        frameon=True,
+        facecolor="white",
+        edgecolor="none",
+        framealpha=0.78,
+        fontsize=5.6,
+        title_fontsize=5.6,
+        ncol=2,
+        columnspacing=0.55,
+        handletextpad=0.18,
+    )
+    save_panel(fig, ax1, "Fig4_internal_external_scatter", dirs)
     save_fig(fig, "Fig4_external_validation_and_transferability", dirs)
     plt.close(fig)
     qa["Fig05"] = {
@@ -844,7 +876,7 @@ def confusion_matrix_for(df: pd.DataFrame, model: str, dataset: str) -> pd.DataF
         .reindex(index=CLASS_ORDER, columns=CLASS_ORDER)
     )
     counts = class_counts_for(df, model, dataset)
-    mat.index = [f"{CLASS_SHORT[x]} (n={counts.get(x, 0)})" for x in mat.index]
+    mat.index = [f"{CLASS_SHORT[x]} (n = {counts.get(x, 0)})" for x in mat.index]
     mat.columns = [CLASS_SHORT[x] for x in mat.columns]
     return mat
 
@@ -853,20 +885,27 @@ def figure_06_confusion(source_dir: Path, dirs: dict[str, Path], qa: dict) -> No
     df = read_csv(source_dir, "FinalEval_Test_External_Confusion_Matrices_Long.csv")
     panels = [("XGBoost-SSA", "(a) XGBoost-SSA"), ("RF-Default", "(b) RF-Default")]
     dataset = "external_val"
-    fig, axes = plt.subplots(1, 2, figsize=(DOUBLE, 3.05))
-    fig.subplots_adjust(left=0.12, right=0.88, bottom=0.18, top=0.92, wspace=0.30)
+    fig, axes = plt.subplots(1, 2, figsize=(DOUBLE, 3.00))
+    fig.subplots_adjust(left=0.105, right=0.885, bottom=0.16, top=0.91, wspace=0.18)
     for panel_idx, (ax, (model, title)) in enumerate(zip(axes, panels)):
         mat = confusion_matrix_for(df, model, dataset)
         draw_heatmap(ax, mat, cmap=BLUE_CMAP, vmin=0, vmax=1, fmt="{:.2f}", xrotation=0, text_size=FS_CELL)
-        ax.set_title(title, loc="left", fontweight="bold", pad=6, fontsize=10.0)
-        ax.set_xlabel("Predicted class")
-        ax.set_ylabel("True class" if panel_idx == 0 else "")
-        ax.xaxis.label.set_size(9.0)
-        ax.yaxis.label.set_size(9.0)
+        panel_tag(ax, f"({chr(97 + panel_idx)})")
+        ax.text(0.11, 1.025, model, transform=ax.transAxes, ha="left", va="bottom", fontsize=7.6, fontweight="medium")
+        ax.set_xlabel("")
+        ax.set_ylabel("")
         ax.set_aspect("equal")
-        ax.tick_params(axis="both", labelsize=FS_TICK)
+        ax.tick_params(axis="both", labelsize=7.6)
+        if panel_idx == 1:
+            ax.set_yticklabels([])
+            # The second matrix shares the true-class labels with panel (a);
+            # suppress both labels and tick marks to avoid a redundant visual rail.
+            ax.tick_params(axis="y", left=False)
         save_panel(fig, ax, f"Fig06_{model}_external_confusion", dirs)
-    add_colorbar(fig, axes, BLUE_CMAP, 0, 1, "", x_offset=1.08)
+    cax = add_colorbar(fig, axes, BLUE_CMAP, 0, 1, "", x_offset=1.04)
+    cax.set_ylabel("Row-normalized proportion", fontsize=7.2, labelpad=4)
+    fig.text(0.50, 0.078, "Predicted class", ha="center", va="center", fontsize=9.0)
+    fig.text(0.028, 0.51, "True class", ha="center", va="center", rotation=90, fontsize=9.0)
     save_fig(fig, "Fig5_external_confusion_matrices", dirs)
     plt.close(fig)
 
@@ -979,8 +1018,8 @@ def figure_08_domain_shift(source_dir: Path, dirs: dict[str, Path], qa: dict) ->
     p_map = ks.set_index("Feature")["P_Value"].to_dict()
     feature_order = ks[ks["Feature"].isin(FEATURES)].sort_values("KS_Statistic", ascending=False)["Feature"].tolist()
 
-    fig, axes = plt.subplots(2, 4, figsize=(DOUBLE, 4.75))
-    fig.subplots_adjust(left=0.07, right=0.99, bottom=0.25, top=0.92, wspace=0.32, hspace=0.54)
+    fig, axes = plt.subplots(2, 4, figsize=(DOUBLE, 4.20))
+    fig.subplots_adjust(left=0.07, right=0.99, bottom=0.15, top=0.855, wspace=0.31, hspace=0.34)
     axes = axes.ravel()
     for panel_idx, (ax, feat) in enumerate(zip(axes, feature_order)):
         row = panel_idx // 4
@@ -993,8 +1032,8 @@ def figure_08_domain_shift(source_dir: Path, dirs: dict[str, Path], qa: dict) ->
             external_values = log_ready(external_values)
         x_train, y_train = ecdf(train_values)
         x_ext, y_ext = ecdf(external_values)
-        ax.plot(x_train, y_train, color="#2C7FB8", linewidth=1.3, label="Training")
-        ax.plot(x_ext, y_ext, color="#D95F0E", linewidth=1.3, label="External")
+        ax.plot(x_train, y_train, color="#2C7FB8", linewidth=1.16, label="Training")
+        ax.plot(x_ext, y_ext, color="#D95F0E", linewidth=1.16, linestyle=(0, (4, 2)), label="External")
         if feat != "x8":
             ax.set_xscale("log")
             ax.minorticks_off()
@@ -1002,37 +1041,41 @@ def figure_08_domain_shift(source_dir: Path, dirs: dict[str, Path], qa: dict) ->
             if len(positive):
                 ax.set_xlim(left=max(float(positive.min()) * 0.8, 1e-3))
         x_ks, y_train_ks, y_ext_ks = ks_segment(train_values, external_values)
-        ax.plot([x_ks, x_ks], [y_train_ks, y_ext_ks], color="black", linewidth=1.0, zorder=5)
+        ax.plot([x_ks, x_ks], [y_train_ks, y_ext_ks], color="#555555", linewidth=0.65, zorder=5)
         ax.set_ylim(0, 1)
         ax.set_yticks([0, 0.5, 1.0])
-        ax.set_title(
-            feature_label(feat),
-            loc="left",
-            fontsize=FS_SMALL_TITLE,
+        ax.text(
+            0.0,
+            1.055,
+            f"({chr(97 + panel_idx)}) {feature_label(feat)}, KS D = {ks_map.get(feat, np.nan):.3f}",
+            transform=ax.transAxes,
+            ha="left",
+            va="bottom",
+            fontsize=7.7,
             fontweight="bold",
-            pad=1,
-        )
-        ax.set_title(
-            f"KS={ks_map.get(feat, np.nan):.3f}",
-            loc="center",
-            fontsize=FS_SMALL_TITLE,
-            fontweight="bold",
-            pad=1,
         )
         ax.set_xlabel("")
-        if col == 0:
-            ax.set_ylabel("ECDF")
-        else:
+        if col != 0:
             ax.set_ylabel("")
             ax.set_yticklabels([])
+        else:
+            ax.set_ylabel("")
         box_axes(ax, grid_axis="both")
         save_panel(fig, ax, f"Fig08_{feat}_domain_shift", dirs)
     handles = [
-        plt.Line2D([0], [0], color="#2C7FB8", lw=1.7, label="Training domain"),
-        plt.Line2D([0], [0], color="#D95F0E", lw=1.7, label="External validation"),
+        plt.Line2D([0], [0], color="#2C7FB8", lw=1.6, label="Training domain"),
+        plt.Line2D([0], [0], color="#D95F0E", lw=1.6, linestyle=(0, (4, 2)), label="External validation"),
     ]
-    fig.text(0.5, 0.115, "Feature value (mg/L; pH dimensionless)", ha="center", va="center", fontsize=FS_AXIS_LABEL)
-    fig.legend(handles=handles, loc="lower center", ncol=2, frameon=False, bbox_to_anchor=(0.5, 0.045), fontsize=FS_LEGEND)
+    fig.text(
+        0.5,
+        0.055,
+        r"Feature value (mg L$^{-1}$ for ions, log scale; pH, linear scale)",
+        ha="center",
+        va="center",
+        fontsize=FS_AXIS_LABEL,
+    )
+    fig.text(0.022, 0.50, "ECDF", ha="center", va="center", rotation=90, fontsize=FS_AXIS_LABEL)
+    fig.legend(handles=handles, loc="upper center", ncol=2, frameon=False, bbox_to_anchor=(0.5, 0.975), fontsize=7.6)
     save_fig(fig, "Fig6_feature_domain_shift_ecdf", dirs)
     plt.close(fig)
     qa["Fig08"] = {
@@ -1070,52 +1113,48 @@ def figure_09_shap(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
     ranks = ordered.rank(ascending=False, method="first").astype(int)
     display_index = [feature_label(f) for f in ordered.index]
 
-    fig = plt.figure(figsize=(DOUBLE, 3.55))
-    gs = fig.add_gridspec(1, 2, width_ratios=[1.18, 1.0], wspace=0.34)
-    fig.subplots_adjust(left=0.12, right=0.98, bottom=0.17, top=0.93)
+    fig = plt.figure(figsize=(DOUBLE, 3.40))
+    gs = fig.add_gridspec(1, 2, width_ratios=[1.10, 1.18], wspace=0.38)
+    fig.subplots_adjust(left=0.125, right=0.96, bottom=0.15, top=0.88)
     ax0 = fig.add_subplot(gs[0])
     ax1 = fig.add_subplot(gs[1])
 
     y = np.arange(len(ordered))
     bar_h = 0.30
     offsets = np.linspace(-bar_h / 1.8, bar_h / 1.8, len(models))
+    legend_handles = []
     for offset, model in zip(offsets, models):
         color = ALGO_COLORS.get(model.split("-")[0], "#555555")
         vals = percent[model]
-        ax0.barh(y + offset, vals, height=bar_h, color=color, alpha=0.86, edgecolor="white", linewidth=0.65, label=model)
-    ax0.set_title("(a)", loc="left", fontweight="bold", pad=6, fontsize=FS_PANEL)
+        bars = ax0.barh(y + offset, vals, height=bar_h, color=color, alpha=0.86, edgecolor="white", linewidth=0.55)
+        for bar, value in zip(bars, vals):
+            ax0.text(value + 0.28, bar.get_y() + bar.get_height() / 2, f"{value:.1f}", va="center", ha="left", fontsize=6.5, color="#444444")
+        legend_handles.append(patches.Patch(facecolor=color, alpha=0.86, label=model))
+    panel_tag(ax0, "(a)")
     ax0.set_yticks(y)
     ax0.set_yticklabels(display_index)
     ax0.invert_yaxis()
-    ax0.set_xlabel("Relative mean(|SHAP|) contribution (%)", fontsize=9.0)
+    ax0.set_xlabel("Normalized mean(|SHAP|) contribution (%)", fontsize=8.6)
     ax0.set_ylabel("")
     ax0.yaxis.label.set_size(FS_AXIS_LABEL)
     ax0.tick_params(axis="y", labelsize=FS_TICK)
     ax0.tick_params(axis="x", labelsize=FS_TICK)
-    ax0.legend(frameon=False, loc="lower right", fontsize=FS_LEGEND)
-    ax0.set_xlim(0, float(percent.max().max()) * 1.18)
+    ax0.set_xlim(0, 28.0)
     box_axes(ax0, grid_axis="x")
 
     x = np.arange(len(models))
     rank_table = pd.DataFrame({model: ranks[model] for model in models}).sort_values(models[0])
-    label_offsets_left = {
-        "x5": 0.00,
-        "x7": 0.12,
-        "x2": -0.10,
-        "x1": 0.10,
-        "x6": -0.10,
-        "x8": 0.12,
-        "x4": 0.00,
-        "x3": -0.12,
-    }
     for feat, row in rank_table.iterrows():
         color = FEATURE_COLORS.get(feat, "#555555")
         label = feature_label(feat)
-        offset = label_offsets_left.get(feat, 0.0)
-        ax1.plot(x, [row[m] for m in models], color=color, marker="o", markersize=3.2, linewidth=1.05)
-        ax1.text(x[0] - 0.06, row[models[0]] + offset, label, ha="right", va="center", fontsize=7.3, color=color)
-    ax1.set_title("(b)", loc="left", fontweight="bold", pad=6, fontsize=FS_PANEL)
-    ax1.set_xlim(-0.32, len(models) - 1 + 0.32)
+        change = abs(int(row[models[0]]) - int(row[models[-1]]))
+        line_color = color if change >= 3 else "#77838C"
+        label_color = color if change >= 3 else "#59656E"
+        ax1.plot(x, [row[m] for m in models], color=line_color, marker="o", markersize=0, linewidth=1.15, zorder=2)
+        ax1.scatter(x, [row[m] for m in models], color=line_color, s=23, zorder=3, edgecolor="white", linewidth=0.35)
+        ax1.text(x[0] - 0.08, row[models[0]], label, ha="right", va="center", fontsize=7.0, color=label_color)
+    panel_tag(ax1, "(b)")
+    ax1.set_xlim(-0.46, len(models) - 1 + 0.46)
     ax1.set_ylim(8.5, 0.5)
     ax1.set_xticks(x)
     ax1.set_xticklabels(models, fontsize=7.8)
@@ -1123,6 +1162,16 @@ def figure_09_shap(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
     ax1.set_ylabel("Within-model SHAP rank")
     ax1.yaxis.label.set_size(9.0)
     box_axes(ax1, grid_axis="y")
+    fig.legend(
+        handles=legend_handles,
+        loc="upper center",
+        bbox_to_anchor=(0.35, 0.97),
+        ncol=2,
+        frameon=False,
+        fontsize=7.0,
+        handlelength=1.0,
+        columnspacing=1.4,
+    )
 
     save_fig(fig, "Fig7_shap_importance_and_rank_migration", dirs)
     plt.close(fig)
@@ -1197,20 +1246,23 @@ def figure_11_risk(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
     )
 
     xmin, xmax = 0.135, 0.335
-    ymin, ymax = 0.06, max(0.74, float(df[shap_col].max()) * 1.12)
-    fig, ax = plt.subplots(figsize=(DOUBLE, 4.55))
-    fig.subplots_adjust(left=0.10, right=0.98, bottom=0.14, top=0.96)
-    ax.axvspan(xmin, ks_low_med, color="#EAF4EF", alpha=0.9, zorder=0)
-    ax.axvspan(ks_med_high, xmax, color="#FBE9E8", alpha=0.9, zorder=0)
+    ymin, ymax = 0.08, 0.72
+    fig, ax = plt.subplots(figsize=(DOUBLE, 4.30))
+    fig.subplots_adjust(left=0.10, right=0.97, bottom=0.14, top=0.95)
+    ax.axvspan(xmin, ks_low_med, color="#EAF4EF", alpha=0.42, zorder=0)
+    ax.axvspan(ks_low_med, ks_med_high, color="#FFF7E6", alpha=0.42, zorder=0)
+    ax.axvspan(ks_med_high, xmax, color="#FBE9E8", alpha=0.42, zorder=0)
     for x in [ks_low_med, ks_med_high]:
         ax.axvline(x, color="#B7B7B7", linestyle=(0, (3, 3)), linewidth=0.72)
-    for y in [shap_low_med, shap_med_high]:
-        ax.axhline(y, color="#B7B7B7", linestyle=(0, (3, 3)), linewidth=0.72)
-
     shift_colors = {
-        "Low shift": "#4C9277",
-        "Medium shift": "#D9A441",
-        "High shift": "#CF4E4E",
+        "Low shift": "#2C7FB8",
+        "Medium shift": "#D98C20",
+        "High shift": "#C84C4C",
+    }
+    shift_markers = {
+        "Low shift": "o",
+        "Medium shift": "^",
+        "High shift": "s",
     }
 
     def shift_category(value: float) -> str:
@@ -1221,23 +1273,30 @@ def figure_11_risk(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
         return "High shift"
 
     offsets = {
-        "x5": (10, 4),
-        "x7": (12, 5),
-        "x1": (9, 4),
-        "x2": (9, -2),
-        "x6": (12, -3),
-        "x8": (9, -2),
-        "x3": (-12, 0),
-        "x4": (-13, 0),
+        "x5": (9, 5),
+        "x7": (12, 10),
+        "x1": (10, 7),
+        "x2": (10, -3),
+        "x6": (10, -9),
+        "x8": (12, -9),
+        "x3": (-12, 9),
+        "x4": (-13, -1),
     }
-    def bubble_size(value: float) -> float:
-        return 70 + 360 * abs(float(value))
 
     for feat, row in df.iterrows():
-        size = bubble_size(float(row["Cohen's d"]))
         category = shift_category(float(row["KS_Statistic"]))
         color = shift_colors[category]
-        ax.scatter(row["KS_Statistic"], row[shap_col], s=size, color=color, edgecolor="white", linewidth=1.0, zorder=3, alpha=0.94)
+        ax.scatter(
+            row["KS_Statistic"],
+            row[shap_col],
+            s=68,
+            marker=shift_markers[category],
+            color=color,
+            edgecolor="white",
+            linewidth=0.75,
+            zorder=3,
+            alpha=0.94,
+        )
         dx, dy = offsets.get(feat, (7, 0))
         ax.annotate(
             feature_label(feat),
@@ -1250,43 +1309,37 @@ def figure_11_risk(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
         )
     ax.set_xlabel("Training-external KS statistic")
     ax.set_ylabel(rf"Mean(|SHAP|) of {external_model}")
-    ax.text(0.145, 0.725, "Stable signal", color="#777777", fontsize=FS_SMALL_TITLE, ha="left", va="center")
-    ax.text(0.279, 0.438, "Deployment risk", color="#777777", fontsize=FS_SMALL_TITLE, ha="left", va="center")
+    ax.text(0.190, 0.705, "Stable", color="#666666", fontsize=7.0, ha="left", va="top", bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.45, "pad": 0.8})
+    ax.text(0.286, 0.705, "High shift", color="#666666", fontsize=7.0, ha="left", va="top", bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.45, "pad": 0.8})
+    ax.text((ks_low_med + ks_med_high) / 2, 0.705, "Review", color="#666666", fontsize=6.8, ha="center", va="top", bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.45, "pad": 0.8})
     box_axes(ax)
     ax.set_xlim(xmin, xmax)
     ax.set_ylim(ymin, ymax)
     handles = [
-        plt.Line2D([0], [0], marker="o", color="none", markerfacecolor=shift_colors[label], markeredgecolor="white", markersize=6.2, label=label)
+        plt.Line2D(
+            [0],
+            [0],
+            marker=shift_markers[label],
+            color="none",
+            markerfacecolor=shift_colors[label],
+            markeredgecolor="white",
+            markersize=6.2,
+            label=label,
+        )
         for label in ["Low shift", "Medium shift", "High shift"]
     ]
-    shift_legend = ax.legend(
+    ax.legend(
         handles=handles,
-        loc="lower left",
-        bbox_to_anchor=(0.015, 0.015),
-        frameon=False,
+        loc="upper right",
+        bbox_to_anchor=(0.985, 0.89),
+        frameon=True,
+        facecolor="white",
+        edgecolor="none",
+        framealpha=0.82,
         fontsize=7.8,
         borderpad=0.2,
         labelspacing=0.35,
         handletextpad=0.45,
-    )
-    ax.add_artist(shift_legend)
-    size_handles = [
-        ax.scatter([], [], s=bubble_size(value) * 0.68, color="#B8B8B8", edgecolor="white", linewidth=1.0, label=f"{value:.1f}")
-        for value in [0.2, 0.4, 0.6]
-    ]
-    ax.legend(
-        handles=size_handles,
-        title="|Cohen's d|",
-        loc="lower left",
-        bbox_to_anchor=(0.180, 0.000),
-        frameon=False,
-        fontsize=7.8,
-        title_fontsize=7.8,
-        scatterpoints=1,
-        labelspacing=0.95,
-        handleheight=1.25,
-        handletextpad=0.65,
-        borderpad=0.2,
     )
     save_fig(fig, "Fig8_joint_shap_ks_risk_map", dirs)
     plt.close(fig)
@@ -1331,51 +1384,58 @@ def supp_figure_s1(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
     bp = ax.boxplot(
         [left, right],
         patch_artist=True,
-        widths=0.46,
-        tick_labels=[clean_model_label(m) for m in models],
+        widths=0.38,
+        tick_labels=models,
         medianprops={"color": "#D55E00", "linewidth": 1.0},
         boxprops={"linewidth": 0.8},
         whiskerprops={"linewidth": 0.8},
         capprops={"linewidth": 0.8},
         flierprops={"marker": "o", "markersize": 2.6, "markerfacecolor": "#777777", "markeredgewidth": 0},
     )
-    for patch, color in zip(bp["boxes"], ["#9ECAE1", "#C6DBEF"]):
+    box_colors = [
+        ALGO_COLORS.get(models[0].split("-")[0], "#0072B2"),
+        ALGO_COLORS.get(models[-1].split("-")[0], "#D55E00"),
+    ]
+    for patch, color in zip(bp["boxes"], box_colors):
         patch.set_facecolor(color)
-        patch.set_alpha(0.9)
-    for i, vals in enumerate([left, right], start=1):
+        patch.set_alpha(0.68)
+    for i, (vals, color) in enumerate(zip([left, right], box_colors), start=1):
         jitter = rng.normal(i, 0.025, size=len(vals))
-        ax.scatter(jitter, vals, s=9, color="#4D4D4D", alpha=0.55, linewidth=0, zorder=3)
+        ax.scatter(jitter, vals, s=6, color=color, alpha=0.42, linewidth=0, zorder=3)
     supp_panel_label(ax, "(a)")
     ax.set_ylabel(r"External macro-$F_{1}$")
     box_axes(ax, "y")
 
     ax = axes[1]
-    colors = np.where(diff >= 0, "#2CA02C", "#D55E00")
     ax.axhline(0, color="#888888", linewidth=0.75)
-    ax.scatter(np.arange(1, len(diff) + 1), diff, s=18, color=colors, edgecolor="white", linewidth=0.35, zorder=3)
+    display_diff = np.sort(diff)
+    display_colors = np.where(display_diff >= 0, ALGO_COLORS["XGBoost"], ALGO_COLORS["LightGBM"])
+    ax.scatter(np.arange(1, len(display_diff) + 1), display_diff, s=15, color=display_colors, edgecolor="white", linewidth=0.30, zorder=3)
     supp_panel_label(ax, "(b)")
-    ax.set_xlabel("Seed order")
-    ax.set_ylabel("Paired difference")
+    ax.set_xlabel("Paired run index (sorted)")
+    ax.set_ylabel("Paired difference in external macro-F1")
     box_axes(ax, "y")
 
     ax = axes[2]
-    ax.hist(boot, bins=42, density=True, color="#9ECAE1", edgecolor="white", linewidth=0.35)
+    ax.hist(boot, bins=42, density=False, color="#9ECAE1", edgecolor="white", linewidth=0.35)
+    ax.axvline(0, color="#8A8A8A", linewidth=0.85, linestyle=(0, (3, 3)), zorder=1)
     ax.axvline(diff.mean(), color="#3B6EA8", linewidth=1.1)
     ax.axvline(ci_low, color="#D95F02", linewidth=0.9, linestyle="--")
     ax.axvline(ci_high, color="#D95F02", linewidth=0.9, linestyle="--")
+    ci_text = f"95% CI [{ci_low:.4f}, {ci_high:.4f}]".replace("-", "−")
+    supp_panel_label(ax, "(c)")
     ax.text(
-        0.28,
-        1.04,
-        f"mean = {diff.mean():.4f}\n95% CI [{ci_low:.4f}, {ci_high:.4f}]",
+        0.145,
+        1.028,
+        f"Mean Δ = {diff.mean():.4f}; {ci_text}",
         transform=ax.transAxes,
         ha="left",
         va="bottom",
-        fontsize=6.8,
+        fontsize=5.4,
         clip_on=False,
     )
-    supp_panel_label(ax, "(c)")
     ax.set_xlabel("Bootstrap mean difference")
-    ax.set_ylabel("Density")
+    ax.set_ylabel("Bootstrap frequency")
     box_axes(ax)
 
     save_fig(fig, "FigS2_bootstrap_paired_seed_stability", dirs)
@@ -1386,31 +1446,51 @@ def supp_figure_s1(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
 def supp_qq_panel(ax: plt.Axes, values: np.ndarray, label: str) -> None:
     values = np.asarray(values, dtype=float)
     values = np.sort(values[np.isfinite(values)])
-    n = len(values)
-    probs = (np.arange(1, n + 1) - 0.5) / n
+    n_total = len(values)
+    probs = (np.arange(1, n_total + 1) - 0.5) / n_total
     normal = NormalDist()
     osm = np.array([normal.inv_cdf(float(p)) for p in probs])
-    slope, intercept = np.polyfit(osm, values, 1)
-    r = np.corrcoef(osm, values)[0, 1]
-    ax.scatter(osm, values, s=9, color="#0072B2", edgecolor="white", linewidth=0.25)
-    xs = np.linspace(np.min(osm), np.max(osm), 100)
-    ax.plot(xs, slope * xs + intercept, color="#777777", linewidth=0.8)
-    supp_panel_label(ax, label)
-    ax.set_xlabel("Theoretical quantile")
-    ax.set_ylabel("Sample quantile")
-    ax.text(0.04, 0.94, f"r = {r:.3f}", transform=ax.transAxes, ha="left", va="top", fontsize=7.2)
+    central_values = values
+    central_osm = osm
+    slope, intercept = np.polyfit(central_osm, central_values, 1)
+    ax.scatter(central_osm, central_values, s=7, color="#0072B2", edgecolor="white", linewidth=0.22)
+    xs = np.linspace(np.min(central_osm), np.max(central_osm), 100)
+    ax.plot(xs, slope * xs + intercept, color="#777777", linewidth=0.55)
+    ax.set_title(label, loc="left", fontsize=8.6, fontweight="semibold", pad=3)
     box_axes(ax)
 
 
 def supp_figure_s2(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
     raw = read_csv(source_dir, "FinalEval_Test_External_Raw.csv")
-    fig, axes = plt.subplots(1, 3, figsize=(7.6, 2.55), constrained_layout=True)
-    supp_qq_panel(axes[0], raw["Test_F1_Macro"].dropna().to_numpy(float), "(a)")
-    supp_qq_panel(axes[1], raw["Val_F1_Macro"].dropna().to_numpy(float), "(b)")
-    supp_qq_panel(axes[2], raw["Generalization_Gap"].dropna().to_numpy(float), "(c)")
+    residual_columns = ["Test_F1_Macro", "Val_F1_Macro", "Generalization_Gap"]
+    residuals: dict[str, np.ndarray] = {}
+    for column in residual_columns:
+        current = raw[["Algorithm", "Optimizer", column]].dropna().copy()
+        # Residuals from the full two-factor model (Algorithm × Optimizer) are
+        # the deviations around each algorithm/optimizer cell mean.
+        current["residual"] = current[column] - current.groupby(["Algorithm", "Optimizer"])[column].transform("mean")
+        sd = float(current["residual"].std(ddof=1))
+        if not np.isfinite(sd) or sd == 0:
+            raise ValueError(f"Cannot standardize residuals for {column}")
+        residuals[column] = (current["residual"] / sd).to_numpy(float)
+    fig, axes = plt.subplots(1, 3, figsize=(7.6, 2.35))
+    fig.subplots_adjust(left=0.095, right=0.99, bottom=0.20, top=0.87, wspace=0.27)
+    supp_qq_panel(axes[0], residuals["Test_F1_Macro"], "(a) Internal macro-F1")
+    supp_qq_panel(axes[1], residuals["Val_F1_Macro"], "(b) External macro-F1")
+    supp_qq_panel(axes[2], residuals["Generalization_Gap"], "(c) Generalization gap")
+    for ax in axes:
+        ax.set_xlabel("")
+        ax.set_ylabel("")
+    fig.text(0.5, 0.06, "Theoretical normal quantile", ha="center", va="center", fontsize=8.6)
+    fig.text(0.025, 0.51, "Standardized residual quantile", ha="center", va="center", rotation=90, fontsize=8.6)
     save_fig(fig, "FigS3_repeated_macro_f1_qq", dirs)
     plt.close(fig)
-    qa["FigS3"] = {"source": "FinalEval_Test_External_Raw.csv", "rows": int(len(raw))}
+    qa["FigS3"] = {
+        "source": "FinalEval_Test_External_Raw.csv",
+        "residual_model": "Full two-factor Algorithm × Optimizer cell-mean model",
+        "display": "All standardized residual quantiles are shown",
+        "rows_per_panel": {column: int(len(values)) for column, values in residuals.items()},
+    }
 
 
 def supp_figure_s3(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
@@ -1419,22 +1499,30 @@ def supp_figure_s3(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
     k_idx = feature_names.index("x1")
     train = np.asarray(arr["X_train_raw"][:, k_idx], dtype=float)
     external = np.asarray(arr["X_val_raw"][:, k_idx], dtype=float)
-    clip = float(np.nanquantile(np.r_[train, external], 0.99))
+    log_train = np.log10(log_ready(train) + 1.0)
+    log_external = np.log10(log_ready(external) + 1.0)
+    combined = np.r_[log_train, log_external]
+    pooled_quantiles = {q: float(np.quantile(log_external, q)) for q in [0.95, 0.99]}
 
-    fig, axes = plt.subplots(1, 2, figsize=(7.6, 2.75), constrained_layout=True)
+    fig, axes = plt.subplots(1, 2, figsize=(7.6, 3.05), gridspec_kw={"width_ratios": [1.65, 0.75]})
+    fig.subplots_adjust(left=0.09, right=0.99, bottom=0.19, top=0.88, wspace=0.22)
     ax = axes[0]
-    bins = np.linspace(0, clip, 38)
-    ax.hist(np.clip(train, 0, clip), bins=bins, color="#2C7FB8", alpha=0.58, label="Training", edgecolor="white", linewidth=0.25)
-    ax.hist(np.clip(external, 0, clip), bins=bins, color="#D95F02", alpha=0.48, label="External validation", edgecolor="white", linewidth=0.25)
+    bins = np.linspace(float(np.nanmin(combined)), float(np.nanmax(combined)), 38)
+    ax.hist(log_train, bins=bins, density=True, histtype="step", color="#2C7FB8", linewidth=1.15, label="Training")
+    ax.hist(log_external, bins=bins, density=True, histtype="step", color="#D95F02", linewidth=1.15, label="External validation")
+    ax.axvline(float(np.median(log_train)), color="#2C7FB8", linewidth=0.85, linestyle="-.", label="Training median")
+    ax.axvline(float(np.median(log_external)), color="#D95F02", linewidth=0.85, linestyle="-.", label="External median")
+    for q, value in pooled_quantiles.items():
+        ax.axvline(value, color="#707070", linewidth=0.7, linestyle=(0, (2, 2)), zorder=1)
+        ax.text(value, 0.94, f"External P{int(q * 100)}", transform=ax.get_xaxis_transform(), ha="center", va="top", fontsize=6.0, color="#555555")
     supp_panel_label(ax, "(a)")
-    ax.set_xlabel(r"$\mathrm{K}^{+}$ concentration (mg/L)")
-    ax.set_ylabel("Count")
-    ax.legend(frameon=False, loc="upper right")
+    ax.set_xlabel(r"$\log_{10}(\mathrm{K}^{+} + 1)$")
+    ax.set_ylabel("Density")
     box_axes(ax)
 
     ax = axes[1]
     bp = ax.boxplot(
-        [train, external],
+        [log_train, log_external],
         vert=True,
         patch_artist=True,
         widths=0.45,
@@ -1448,17 +1536,38 @@ def supp_figure_s3(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
     for patch, color in zip(bp["boxes"], ["#9ECAE1", "#FDD0A2"]):
         patch.set_facecolor(color)
         patch.set_alpha(0.85)
-    for x, vals, color in [(1, train, "#2C7FB8"), (2, external, "#D95F02")]:
+    for x, vals, color in [(1, log_train, "#2C7FB8"), (2, log_external, "#D95F02")]:
         high = vals[vals >= np.nanquantile(vals, 0.90)]
-        jitter = np.random.default_rng(20260608 + x).normal(x, 0.035, len(high))
-        ax.scatter(jitter, high, s=8, color=color, alpha=0.7, edgecolor="white", linewidth=0.25, zorder=3)
+        jitter = np.random.default_rng(20260608 + x).normal(x, 0.060, len(high))
+        ax.scatter(jitter, high, s=3.6, color=color, alpha=0.30, edgecolor="white", linewidth=0.18, zorder=3)
     supp_panel_label(ax, "(b)")
-    ax.set_ylabel(r"$\mathrm{K}^{+}$ concentration (mg/L)")
+    ax.set_ylabel(r"$\log_{10}(\mathrm{K}^{+} + 1)$")
     box_axes(ax, "y")
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    axes[0].legend(
+        handles,
+        labels,
+        loc="upper left",
+        bbox_to_anchor=(0.004, 0.992),
+        frameon=True,
+        facecolor="white",
+        edgecolor="none",
+        framealpha=0.84,
+        ncol=1,
+        fontsize=5.9,
+        columnspacing=0.58,
+        handletextpad=0.32,
+        handlelength=1.15,
+    )
 
     save_fig(fig, "FigS4_k_distribution_high_value_tail", dirs)
     plt.close(fig)
-    qa["FigS4"] = {"source": "feature_arrays.npz", "k_99th_percentile": clip}
+    qa["FigS4"] = {
+        "source": "feature_arrays.npz",
+        "transform": "log10(K+ + 1)",
+        "pooled_log_quantile_markers": {f"P{int(q * 100)}": value for q, value in pooled_quantiles.items()},
+    }
 
 
 def supp_figure_s4(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
@@ -1469,21 +1578,144 @@ def supp_figure_s4(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
     role_models = df.groupby("Role")["Model"].first().to_dict()
     rank_pivot = df.pivot_table(index="Feature", columns="Role", values="Rank", aggfunc="first").reindex(FEATURES)
 
-    x = np.arange(len(role_order))
-    fig, ax = plt.subplots(figsize=(6.3, 3.9), constrained_layout=True)
-    for feat in FEATURES:
-        vals = rank_pivot.loc[feat, role_order].to_numpy(float)
-        ax.plot(x, vals, marker="o", markersize=4.2, linewidth=1.35, color=FEATURE_COLORS[feat], label=FEATURE_LABELS[feat])
-    ax.set_xticks(x)
-    ax.set_xticklabels([f"{role}\n({role_models.get(role, '')})" for role in role_order])
-    ax.set_ylim(8.4, 0.6)
-    ax.set_yticks(range(1, 9))
-    ax.set_ylabel("Feature importance rank (1 = most important)")
-    ax.legend(loc="center left", bbox_to_anchor=(1.01, 0.5), frameon=False, ncol=1)
-    box_axes(ax, "y")
+    role_labels = {
+        "internal_test_best": "RF-Default",
+        "external_val_best": "XGB-SSA",
+        "largest_test_to_val_drop": "SVM-Grid",
+    }
+    rank_pivot = rank_pivot.assign(_mean_rank=rank_pivot[role_order].mean(axis=1)).sort_values("_mean_rank").drop(columns="_mean_rank")
+    rank_display = rank_pivot.rename(index=feature_label, columns=role_labels)
+    fig, ax = plt.subplots(figsize=(5.15, 3.30))
+    fig.subplots_adjust(left=0.20, right=0.98, bottom=0.17, top=0.88)
+    draw_heatmap(ax, rank_display, cmap=PURPLE_CMAP.reversed(), vmin=1, vmax=8, fmt="{:.0f}", xrotation=0, text_size=8.0)
+    ax.set_title("SHAP importance rank (1 = most important)", loc="left", fontsize=8.0, fontweight="normal", pad=4)
+    ax.set_xlabel("")
+    ax.set_ylabel("Feature", fontsize=8.5)
+    ax.tick_params(axis="x", labelsize=7.5)
+    ax.tick_params(axis="y", labelsize=8.0)
     save_fig(fig, "FigS5_shap_rank_migration_roles", dirs)
     plt.close(fig)
     qa["FigS5"] = {"source": "SHAP_Generalization_Contrast.csv", "roles": role_order}
+
+
+def supp_figure_s5_local_calibration(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
+    summary = read_csv(source_dir, "LocalCalibration_Summary.csv")
+    per_run = read_csv(source_dir, "LocalCalibration_PerRun.csv")
+    try:
+        sweep = read_csv(source_dir, "LocalCalibration_SizeSweep_Summary.csv")
+    except FileNotFoundError:
+        sweep_detail = read_csv(source_dir, "LocalCalibration_SizeSweep.csv")
+        sweep = (
+            sweep_detail.groupby(["Mine", "adaptation_n_requested"], as_index=False)
+            .agg(
+                adapted_macroF1p_mean=("adapted_macroF1p", "mean"),
+                adapted_macroF1p_sd=("adapted_macroF1p", "std"),
+                n_eff=("adapted_macroF1p", "size"),
+            )
+        )
+        sweep["adapted_macroF1p_sd"] = sweep["adapted_macroF1p_sd"].fillna(0.0)
+    required_summary = {
+        "Mine",
+        "base_macroF1p",
+        "base_macroF1p_sd",
+        "adapted_macroF1p",
+        "adapted_macroF1p_sd",
+        "delta_macroF1p",
+        "improved_n_macroF1p",
+    }
+    required_sweep = {"Mine", "adaptation_n_requested", "adapted_macroF1p_mean", "adapted_macroF1p_sd", "n_eff"}
+    missing_summary = required_summary.difference(summary.columns)
+    missing_sweep = required_sweep.difference(sweep.columns)
+    if missing_summary or missing_sweep:
+        raise KeyError(
+            "Missing LocalCalibration columns: "
+            f"summary={sorted(missing_summary)}, sweep={sorted(missing_sweep)}"
+        )
+
+    mine_order = summary["Mine"].tolist()
+    mine_colors = {"Xiqu": "#0072B2", "Tunlan": "#D55E00"}
+    fig, axes = plt.subplots(
+        1,
+        2,
+        figsize=(DOUBLE, 78 * MM),
+        gridspec_kw={"width_ratios": [0.96, 1.04], "wspace": 0.32},
+        constrained_layout=False,
+    )
+
+    ax = axes[0]
+    baseline_color = "#B7B7B7"
+    recal_color = "#2B7DBC"
+    for mine_idx, mine in enumerate(mine_order):
+        runs = per_run[per_run["Mine"].eq(mine)]
+        x_base, x_adapt = mine_idx - 0.15, mine_idx + 0.15
+        for _, run in runs.iterrows():
+            ax.plot([x_base, x_adapt], [run["base_macroF1p"], run["adapted_macroF1p"]], color="#C9D0D5", linewidth=0.55, alpha=0.20, zorder=1)
+        row = summary[summary["Mine"].eq(mine)].iloc[0]
+        ax.errorbar(x_base, row["base_macroF1p"], yerr=row["base_macroF1p_sd"], fmt="o", color=baseline_color, markeredgecolor="white", markersize=6.0, capsize=2.2, elinewidth=0.8, label="Baseline mean ± SD" if mine_idx == 0 else None, zorder=4)
+        ax.errorbar(x_adapt, row["adapted_macroF1p"], yerr=row["adapted_macroF1p_sd"], fmt="o", color=recal_color, markeredgecolor="white", markersize=6.0, capsize=2.2, elinewidth=0.8, label="Adapted mean ± SD" if mine_idx == 0 else None, zorder=4)
+        ax.text(
+            mine_idx,
+            0.822,
+            f"mean Δ = {row['delta_macroF1p']:+.3f}\n{int(row['improved_n_macroF1p'])}/30 improved",
+            ha="center",
+            va="top",
+            fontsize=6.8,
+            linespacing=1.05,
+        )
+    ax.set_xticks(np.arange(len(mine_order)))
+    ax.set_xticklabels(mine_order)
+    ax.set_ylabel("Present-class macro-F1")
+    ax.set_ylim(0.30, 0.85)
+    panel_tag(ax, "(a)")
+    ax.text(0.09, 1.025, "Held-out target-mine performance", transform=ax.transAxes, ha="left", va="bottom", fontsize=8.2, fontweight="semibold")
+    handles, labels = ax.get_legend_handles_labels()
+    ax.legend(handles, labels, loc="lower left", frameon=False, fontsize=6.2, ncol=2, handletextpad=0.35, columnspacing=0.8)
+    box_axes(ax, "y")
+
+    ax = axes[1]
+    sample_sizes = sorted(sweep["adaptation_n_requested"].unique())
+    positions = np.arange(len(sample_sizes))
+    for mine in mine_order:
+        sw = sweep[sweep["Mine"] == mine].sort_values("adaptation_n_requested")
+        if sw.empty:
+            continue
+        ax.errorbar(
+            positions + (-0.030 if mine == mine_order[0] else 0.030),
+            sw["adapted_macroF1p_mean"],
+            yerr=sw["adapted_macroF1p_sd"],
+            marker="o",
+            markersize=4.4,
+            linewidth=1.35,
+            capsize=2.8,
+            color=mine_colors.get(mine, "#555555"),
+            label=f"{mine} adapted",
+        )
+        base = float(summary.loc[summary["Mine"] == mine, "base_macroF1p"].iloc[0])
+        ax.axhline(base, color=mine_colors.get(mine, "#555555"), linewidth=0.75, linestyle=":", alpha=0.75, label=f"{mine} baseline")
+    ax.set_xlabel("Number of local adaptation samples")
+    ax.set_ylabel("Present-class macro-F1")
+    ax.set_xticks(positions)
+    ax.set_xticklabels(sample_sizes)
+    ax.set_xlim(-0.35, len(sample_sizes) - 0.65)
+    ax.set_ylim(0.40, 0.80)
+    panel_tag(ax, "(b)")
+    ax.text(0.09, 1.025, "Recovery versus local sample size", transform=ax.transAxes, ha="left", va="bottom", fontsize=8.2, fontweight="semibold")
+    ax.legend(frameon=False, loc="upper left", fontsize=6.2, ncol=2, columnspacing=0.65, handlelength=1.35)
+    box_axes(ax, "y")
+
+    fig.subplots_adjust(left=0.075, right=0.985, bottom=0.14, top=0.88)
+    save_fig(fig, "FigS6_TargetMineAdaptation", dirs)
+    plt.close(fig)
+    qa["FigS6"] = {
+        "source": [
+            "LocalCalibration_Summary.csv",
+            "LocalCalibration_SizeSweep.csv",
+            "LocalCalibration_SizeSweep_Summary.csv",
+        ],
+        "mines": mine_order,
+        "n_repeats": summary["n_repeats"].astype(int).tolist() if "n_repeats" in summary.columns else None,
+        "delta_macroF1p": summary["delta_macroF1p"].round(4).tolist(),
+    }
 
 
 def inspect_supp_outputs(dirs: dict[str, Path], qa: dict) -> None:
@@ -1541,6 +1773,7 @@ def main() -> None:
             ("FigS3", supp_figure_s2),
             ("FigS4", supp_figure_s3),
             ("FigS5", supp_figure_s4),
+            ("FigS6", supp_figure_s5_local_calibration),
         ]
         for label, fn in supp_builders:
             print(f"[supp] {label}")

@@ -85,7 +85,7 @@ python make_figures_submission.py \
 - represents class imbalance once through balanced sample weights, with `RF class_weight=None`;
 - recomputes balanced sample weights for each model's actual training set;
 - enforces requested adaptation sample counts through largest-remainder allocation where feasible; and
-- writes split-level records, summaries, and the sample-size sweep used for Supplementary Figure S6 and Tables S11–S13.
+- writes split-level records, summaries, and the sample-size sweep used for Supplementary Figure S1 and Tables S11–S13.
 
 ## Supplementary-file mapping
 
@@ -94,4 +94,4 @@ python make_figures_submission.py \
 
 ## Repository release and DOI
 
-Keep the article title unchanged in the manuscript, supplementary files, repository description, README, and archive metadata. Create or update the public release only after the manuscript, supplementary files, code, processed non-sensitive tables, and figure files are frozen. Do not upload restricted raw workbooks unless the data providers approve redistribution.
+Create or update the public release only after the manuscript, supplementary files, code, processed non-sensitive tables, and figure files are frozen. Do not upload restricted raw workbooks unless the data providers approve redistribution.

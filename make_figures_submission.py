@@ -1598,7 +1598,7 @@ def supp_figure_s4(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
     qa["FigS5"] = {"source": "SHAP_Generalization_Contrast.csv", "roles": role_order}
 
 
-def supp_figure_s5_local_calibration(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
+def supp_figure_s6_target_mine_adaptation(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
     summary = read_csv(source_dir, "LocalCalibration_Summary.csv")
     per_run = read_csv(source_dir, "LocalCalibration_PerRun.csv")
     try:
@@ -1773,7 +1773,7 @@ def main() -> None:
             ("FigS3", supp_figure_s2),
             ("FigS4", supp_figure_s3),
             ("FigS5", supp_figure_s4),
-            ("FigS6", supp_figure_s5_local_calibration),
+            ("FigS6", supp_figure_s6_target_mine_adaptation),
         ]
         for label, fn in supp_builders:
             print(f"[supp] {label}")

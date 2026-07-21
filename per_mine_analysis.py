@@ -1,47 +1,18 @@
-# -*- coding: utf-8 -*-
-"""
-Per-mine external validation analysis  (standalone; does NOT re-run the
-main pipeline).
 
-独立的逐矿分析脚本 —— 直接复用主程序已经保存的逐样本预测文件
-    <output_dir>/Tables/FinalEval_Test_External_Predictions.csv
-因此【不需要】重新运行 main_analysis_pipeline.py。唯一需要重新拟合模型的
-部分是"类权重敏感性分析"(第7节),只拟合 2 个代表模型 x 30 个种子,几分钟内完成。
+"""Standalone per-mine external-validation analysis.
 
-本脚本产出(写入 <output_dir>/PerMine_Analysis/):
-  Tables/
-    PerMine_Composition.csv          每矿样本量与类别构成
-    PerMine_Performance_AllModels.csv  全部28配置的逐矿指标(均值/SD, 30种子)
-    PerMine_Performance_Main.csv     代表模型的逐矿指标 + bootstrap区间 + 主要误判
-    ConditionalKS.csv                pooled KS + 分类别条件KS + 等权平均KS(+bootstrap区间)
-    PerMine_KS.csv                   每矿相对马兰域的8特征KS与平均KS
-    KS_vs_Performance.csv            每矿平均KS vs 性能的探索性关联(Spearman)
-    WeightSensitivity.csv            balanced(现状复现) vs uniform(去权重)对比
-    WeightSensitivity_PerClass.csv   逐类召回率对比
-  Figures/
-    Fig_PerMine_Heatmap.png          逐矿 x 代表模型 性能热图
-    Fig_ConditionalKS_Heatmap.png    条件KS热图
-    Fig_KS_vs_MCC_Scatter.png        每矿平均KS vs MCC 散点(Spearman)
-  README_PerMine.txt                 各文件字段说明与论文引用建议
+The script reuses sample-level predictions written by
+``main_analysis_pipeline.py`` and does not rerun the main 28-configuration
+experiment. It produces mine-specific performance summaries,
+class-conditional Kolmogorov-Smirnov diagnostics, exploratory mine-level
+shift-performance analyses, class-weight sensitivity results, and figures
+under ``<output_dir>/PerMine_Analysis``.
 
-用法(在主程序同一目录下运行):
+Example:
     python per_mine_analysis.py \
         --output_dir ../Recreated_Model_Output \
-        --data_dir   ../Input_Data \
-        --mine_col   auto
-
-矿井ID的来源(二选一, 自动探测):
-  (a) external_validation_set.xlsx 中本身含有矿井列(如 mine / 矿井 / 煤矿名);
-  (b) 单独提供 --mine_map_file, 内容为与外部集"同行序"的一列矿井名
-      (csv或xlsx, 一列即可; 也可含两列 [row_index, mine]).
-
-【对齐保证】脚本用与主程序完全相同的规则加载外部集(表头回退、标签规范化、
-未知标签剔除), 然后与预测文件中每个 (Model, Run_Seed) 组的样本数和
-真值标签分布做一致性校验; 不一致会直接报错退出, 绝不静默错位。
-
-依赖: numpy pandas scipy scikit-learn matplotlib
-     (仅 --run 含 weight 时额外需要 xgboost)
-"""
+        --data_dir ../Input_Data \
+        --mine_col auto"""
 
 import argparse
 import json
@@ -72,9 +43,7 @@ def configure_fonts():
 
 configure_fonts()
 
-# ------------------------------------------------------------------
-# 与主程序保持一致的常量(从 main_analysis_pipeline.py 抄录, 勿改)
-# ------------------------------------------------------------------
+
 ION_COLS = ['x1', 'x2', 'x3', 'x4', 'x5', 'x6', 'x7']
 PH_COL = 'x8'
 CORE_FEATURE_COLS = ['x1', 'x2', 'x3', 'x4', 'x5', 'x6', 'x7', 'x8']
@@ -87,20 +56,18 @@ CANONICAL_ORDER = [
     'Taiyuan limestone (T)',
     'Permian sandstone fissure (P)',
 ]
-SHORT = {'Ordovician limestone (O)': 'O', 'Goaf water (G)': 'G',
-         'Taiyuan limestone (T)': 'T', 'Permian sandstone fissure (P)': 'P'}
 PATTERNS = {
-    'Ordovician limestone (O)': ('ordovician', '奥灰', '奥陶'),
-    'Goaf water (G)': ('goaf', '老空', '采空'),
-    'Taiyuan limestone (T)': ('taiyuan', '太灰', '太原'),
-    'Permian sandstone fissure (P)': ('permian', 'sandstone', '砂岩', '二叠'),
+    'Ordovician limestone (O)': ('ordovician', '\u5965\u7070', '\u5965\u9676'),
+    'Goaf water (G)': ('goaf', '\u8001\u7a7a', '\u91c7\u7a7a'),
+    'Taiyuan limestone (T)': ('taiyuan', '\u592a\u7070', '\u592a\u539f'),
+    'Permian sandstone fissure (P)': ('permian', 'sandstone', '\u7802\u5ca9', '\u4e8c\u53e0'),
 }
 EXACT_ALIASES = {
     '2': 0, '2.0': 0, 'o': 0, '3': 1, '3.0': 1, 'g': 1,
     '4': 2, '4.0': 2, 't': 2, '5': 3, '5.0': 3, 'p': 3,
 }
 MINE_COL_CANDIDATES = ['mine', 'mine_id', 'mine_name', 'Mine', 'Mine_ID',
-                       'MineName', '矿井名称', '矿井', '矿名', '煤矿', '矿区', '矿']
+                       'MineName', '\u77ff\u4e95\u540d\u79f0', '\u77ff\u4e95', '\u77ff\u540d', '\u7164\u77ff', '\u77ff\u533a', '\u77ff']
 
 RF_DEFAULT_PARAMS = {'n_estimators': 200, 'max_features': 'sqrt', 'max_depth': 8,
                      'min_samples_leaf': 4, 'min_samples_split': 6,
@@ -121,15 +88,12 @@ def canonicalize(label):
 def resolve_target_column(df, preferred='y'):
     if preferred in df.columns:
         return preferred
-    for cand in ('y', '充水水源', 'label', 'target', 'class'):
+    for cand in ('y', '\u5145\u6c34\u6c34\u6e90', 'label', 'target', 'class'):
         if cand in df.columns:
             return cand
     return df.columns[-1]
 
 
-# ------------------------------------------------------------------
-# 快速指标(bincount混淆矩阵, 供bootstrap使用; 与sklearn结果一致)
-# ------------------------------------------------------------------
 def _confusion(y_true, y_pred, k=4):
     return np.bincount(y_true * k + y_pred, minlength=k * k).reshape(k, k)
 
@@ -178,15 +142,12 @@ def nanmean_quiet(values):
     return float(np.nanmean(arr)) if np.isfinite(arr).any() else np.nan
 
 
-# ------------------------------------------------------------------
-# 数据加载(复现主程序逻辑) + 矿井ID提取
-# ------------------------------------------------------------------
 def load_external_with_mines(external_path, mine_col='auto', mine_map_file=None):
     """Replicate the pipeline's external-set loading; return
     (X_raw [n,8], y_enc [n], mines [n], df_used)."""
     external_path = Path(external_path)
     if not external_path.exists():
-        sys.exit(f'[错误] 外部验证集不存在: {external_path}')
+        sys.exit(f'[error] external validation file not found: {external_path}')
     df = pd.read_excel(external_path)
     feature_input = ION_COLS + [PH_COL]
     expected = feature_input + ['y']
@@ -196,11 +157,11 @@ def load_external_with_mines(external_path, mine_col='auto', mine_map_file=None)
         if df.shape[1] == len(expected):
             df = pd.read_excel(external_path, header=None, names=expected)
         else:
-            sys.exit('[错误] 外部集列结构无法识别: 既无 x1..x8 表头, '
-                     '列数也不等于9。请检查文件或提供带表头的版本。')
+            sys.exit('[error] cannot parse external columns: x1..x8 headers are absent and '
+                     'the workbook does not contain exactly nine columns. Provide a valid file.')
     tcol = resolve_target_column(df, 'y')
 
-    # ---- 矿井ID ----
+
     mines = None
     if mine_col != 'none':
         if mine_col not in ('auto', None) and mine_col in df.columns:
@@ -209,7 +170,7 @@ def load_external_with_mines(external_path, mine_col='auto', mine_map_file=None)
             for c in MINE_COL_CANDIDATES:
                 if c in df.columns:
                     mines = df[c].astype(str).str.strip().values
-                    print(f'[信息] 自动识别矿井列: "{c}"')
+                    print(f'[info] detected mine column: "{c}"')
                     break
     if mines is None and mine_map_file:
         mp = Path(mine_map_file)
@@ -217,23 +178,23 @@ def load_external_with_mines(external_path, mine_col='auto', mine_map_file=None)
             else pd.read_csv(mp)
         col = mdf.columns[-1]
         if len(mdf) != len(df):
-            sys.exit(f'[错误] mine_map_file 行数({len(mdf)})与外部集行数'
-                     f'({len(df)})不一致, 无法按行序对齐。')
+            sys.exit(f'[error] mine-map rows ({len(mdf)}) do not match external rows '
+                     f'({len(df)}); row-wise alignment is impossible.')
         mines = mdf[col].astype(str).str.strip().values
-        print(f'[信息] 从映射文件读取矿井列: "{col}"')
+        print(f'[info] loaded mine identifiers from mapping column: "{col}"')
     if mines is None:
-        sys.exit('[错误] 未找到矿井ID列。请用 --mine_col 指定外部集中的列名, '
-                 '或用 --mine_map_file 提供同行序的矿井名文件。')
+        sys.exit('[error] no mine identifier column was found. Specify it with --mine_col '
+                 'or provide a row-aligned mapping file with --mine_map_file.')
 
     for col in feature_input:
         df[col] = pd.to_numeric(df[col], errors='coerce').astype(float)
     X_raw = df[CORE_FEATURE_COLS].values.astype(float)
     y_names = np.array([canonicalize(v) for v in df[tcol].values], dtype=object)
 
-    mask = np.isin(y_names, CANONICAL_ORDER)      # 与主程序相同: 剔除未知标签
+    mask = np.isin(y_names, CANONICAL_ORDER)
     n_drop = int((~mask).sum())
     if n_drop:
-        print(f'[信息] 剔除未知标签样本 {n_drop} 个(与主程序行为一致)。')
+        print(f'[info] removed {n_drop} samples with unknown labels, matching the main pipeline.')
     X_raw, y_names, mines = X_raw[mask], y_names[mask], mines[mask]
     y_enc = np.array([CANONICAL_ORDER.index(v) for v in y_names], dtype=int)
     return X_raw, y_enc, mines, df.loc[mask].reset_index(drop=True)
@@ -246,7 +207,7 @@ def load_malan(data_dir, train_domain='train_only'):
                  else ['train_set.xlsx', 'test_set.xlsx']):
         p = data_dir / name
         if not p.exists():
-            sys.exit(f'[错误] 找不到 {p}')
+            sys.exit(f'[error] file not found: {p}')
         frames.append(pd.read_excel(p))
     parts = []
     for f in frames:
@@ -265,45 +226,42 @@ def load_malan(data_dir, train_domain='train_only'):
 def load_predictions(output_dir):
     p = Path(output_dir) / 'Tables' / 'FinalEval_Test_External_Predictions.csv'
     if not p.exists():
-        sys.exit(f'[错误] 找不到主程序预测文件: {p}\n'
-                 '请确认 --output_dir 指向主程序的输出目录。')
+        sys.exit(f'[error] main-pipeline prediction file not found: {p}\n'
+                 'Confirm that --output_dir points to the main-pipeline output directory.')
     df = pd.read_csv(p)
     ext = df[df['Dataset'] == 'external_val'].copy()
     if ext.empty:
-        sys.exit('[错误] 预测文件中没有 external_val 记录。')
+        sys.exit('[error] the prediction file contains no external_val records.')
     return ext
 
 
 def sanity_check_alignment(pred_ext, y_enc):
-    """每个 (Model, Run_Seed) 组的样本数与真值分布必须与重建的外部集一致。"""
+    """Verify sample counts, class counts, and row-level label alignment."""
     n = len(y_enc)
     ref = np.bincount(y_enc, minlength=4)
     g0 = pred_ext.groupby(['Model', 'Run_Seed'])
     sizes = g0.size().unique()
     if not (len(sizes) == 1 and sizes[0] == n):
-        sys.exit(f'[错误] 对齐校验失败: 预测组大小 {sorted(sizes.tolist())} '
-                 f'!= 重建外部集 n={n}。检查外部文件版本是否与主程序运行时一致。')
+        sys.exit(f'[error] alignment failed: prediction-group sizes {sorted(sizes.tolist())} '
+                 f'!= reconstructed external n={n}. Verify that the external file matches the pipeline run.')
     one = g0.get_group(next(iter(g0.groups))).sort_values('Sample_Index')
     got = np.bincount(one['True_Label'].to_numpy(int), minlength=4)
     if not np.array_equal(got, ref):
-        sys.exit(f'[错误] 对齐校验失败: 真值分布不一致 预测{got.tolist()} vs '
-                 f'重建{ref.tolist()}。')
+        sys.exit(f'[error] alignment failed: prediction labels {got.tolist()} differ from '
+                 f'reconstructed labels {ref.tolist()}.')
     if not np.array_equal(one['True_Label'].to_numpy(int)[np.argsort(
             one['Sample_Index'].to_numpy(int))], y_enc):
-        sys.exit('[错误] 对齐校验失败: 逐样本真值序列不一致。')
-    print(f'[通过] 对齐校验: n={n}, 类分布 O/G/T/P = {ref.tolist()}')
+        sys.exit('[error] alignment failed: row-level true-label sequences differ.')
+    print(f'[ok] alignment verified: n={n}, O/G/T/P counts={ref.tolist()}')
 
 
-# ------------------------------------------------------------------
-# 1) 逐矿性能
-# ------------------------------------------------------------------
 def per_mine_performance(pred_ext, y_enc, mines, out_tables, out_figs,
                          rep_models, n_boot=500, rng=None):
     rng = rng or np.random.default_rng(20260718)
     mine_names = pd.unique(mines)
     idx_by_mine = {m: np.where(mines == m)[0] for m in mine_names}
 
-    # ---- 每矿构成表 ----
+
     comp_rows = []
     for m in mine_names:
         yy = y_enc[idx_by_mine[m]]
@@ -318,8 +276,7 @@ def per_mine_performance(pred_ext, y_enc, mines, out_tables, out_figs,
     comp.to_csv(out_tables / 'PerMine_Composition.csv', index=False,
                 encoding='utf-8-sig')
 
-    # ---- 预测按 (Model, Seed) 整理为向量, 一次性算所有矿 ----
-    order = np.argsort  # noqa
+
     all_rows, main_rows = [], []
     for (model, seed), g in pred_ext.groupby(['Model', 'Run_Seed']):
         g = g.sort_values('Sample_Index')
@@ -347,7 +304,7 @@ def per_mine_performance(pred_ext, y_enc, mines, out_tables, out_figs,
     agg.to_csv(out_tables / 'PerMine_Performance_AllModels.csv', index=False,
                encoding='utf-8-sig')
 
-    # ---- 代表模型: bootstrap区间 + 逐类召回 + 主要误判 ----
+
     preds_by_ms = {k: g.sort_values('Sample_Index')['Pred_Label'].to_numpy(int)
                    for k, g in pred_ext.groupby(['Model', 'Run_Seed'])}
     seeds_by_model = {}
@@ -355,13 +312,13 @@ def per_mine_performance(pred_ext, y_enc, mines, out_tables, out_figs,
         seeds_by_model.setdefault(mo, []).append(se)
     for model in rep_models:
         if model not in seeds_by_model:
-            print(f'[警告] 代表模型 {model} 不在预测文件中, 跳过。')
+            print(f'[warning] representative model {model} is absent from predictions and was skipped.')
             continue
         seeds = seeds_by_model[model]
         for m in mine_names:
             ii = idx_by_mine[m]
             yt = y_enc[ii]
-            # bootstrap: 每次抽一个随机种子的预测 + 类内分层重采样样本
+
             stat = []
             cls_idx = {c: ii[yt == c] for c in np.unique(yt)}
             for _ in range(n_boot):
@@ -371,7 +328,7 @@ def per_mine_performance(pred_ext, y_enc, mines, out_tables, out_figs,
                                      for v in cls_idx.values()])
                 stat.append(macro_f1_present(y_enc[bi], yp[bi]))
             lo, hi = np.percentile(stat, [2.5, 97.5])
-            # 逐类召回(种子平均) + 主要误判方向(汇总所有种子)
+
             recs = {c: [] for c in range(4)}
             err_counter = {}
             for se in seeds:
@@ -405,7 +362,7 @@ def per_mine_performance(pred_ext, y_enc, mines, out_tables, out_figs,
     main.to_csv(out_tables / 'PerMine_Performance_Main.csv', index=False,
                 encoding='utf-8-sig')
 
-    # ---- 热图 ----
+
     hm = agg[agg.Model.isin(rep_models)].pivot(index='Mine', columns='Model',
                                                values='MCC_mean')
     hm = hm.loc[comp.set_index('Mine').index.intersection(hm.index)]
@@ -425,14 +382,11 @@ def per_mine_performance(pred_ext, y_enc, mines, out_tables, out_figs,
     ax.set_title('Per-mine MCC (mean over 30 stochastic fits)', fontsize=9)
     fig.colorbar(im, ax=ax, shrink=0.8, label='MCC')
     fig.tight_layout()
-    fig.savefig(out_figs / 'Fig_PerMine_Heatmap.png', dpi=300)
+    fig.savefig(out_figs / 'Fig_PerMine_Heatmap.png', dpi=600)
     plt.close(fig)
     return comp, per_seed, main
 
 
-# ------------------------------------------------------------------
-# 2) 条件KS(分类别) + pooled KS
-# ------------------------------------------------------------------
 def ks_of(a, b):
     a = a[np.isfinite(a)]; b = b[np.isfinite(b)]
     if len(a) < 2 or len(b) < 2:
@@ -456,7 +410,7 @@ def conditional_ks(X_malan, y_malan, X_ext, y_ext, out_tables, out_figs,
             row[f'n_Malan_{sh}'] = int(np.isfinite(a).sum())
             row[f'n_Ext_{sh}'] = int(np.isfinite(b).sum())
             cond.append(ks)
-            # 小样本类别的bootstrap稳定区间
+
             if np.isfinite(ks):
                 bs = []
                 for _ in range(n_boot):
@@ -490,14 +444,11 @@ def conditional_ks(X_malan, y_malan, X_ext, y_ext, out_tables, out_figs,
                  '(Malan domain vs external domain)', fontsize=9)
     fig.colorbar(im, ax=ax, shrink=0.85, label='KS')
     fig.tight_layout()
-    fig.savefig(out_figs / 'Fig_ConditionalKS_Heatmap.png', dpi=300)
+    fig.savefig(out_figs / 'Fig_ConditionalKS_Heatmap.png', dpi=600)
     plt.close(fig)
     return tab
 
 
-# ------------------------------------------------------------------
-# 3) 每矿KS与性能的探索性关联
-# ------------------------------------------------------------------
 def per_mine_ks_association(X_malan, X_ext, mines, per_seed, primary_model,
                             out_tables, out_figs):
     mine_names = pd.unique(mines)
@@ -540,20 +491,14 @@ def per_mine_ks_association(X_malan, X_ext, mines, per_seed, primary_model,
                  fontsize=9)
     ax.grid(alpha=0.3)
     fig.tight_layout()
-    fig.savefig(out_figs / 'Fig_KS_vs_MCC_Scatter.png', dpi=300)
+    fig.savefig(out_figs / 'Fig_KS_vs_MCC_Scatter.png', dpi=600)
     plt.close(fig)
-    print(f'[结果] 每矿平均KS与{primary_model} MCC的Spearman rho = '
-          f'{rho:.3f} (p={pval:.3f}) —— 仅作探索性关联, 勿写因果。')
+    print(f'[result] Spearman association between mean per-mine KS and {primary_model} MCC: '
+          f'rho={rho:.3f}, p={pval:.3f}; interpret as exploratory, not causal.')
     return ks_tab, j
 
 
-# ------------------------------------------------------------------
-# 4) 类权重敏感性: balanced(复现主程序) vs uniform(去掉权重)
-#    注意: 主程序实际对所有模型施加了逆频率权重(RF: class_weight='balanced';
-#    XGB/LGBM: 平衡样本权重), 与稿件3.4节原表述相反。因此本敏感性分析的
-#    对照方向是"去掉权重", 回答: 权重贡献了多少少数类识别?
-# ------------------------------------------------------------------
-def weight_sensitivity(data_dir, X_ext_raw, y_ext, mines, xgb_params_by_seed,
+def weight_sensitivity(data_dir, X_ext_raw, y_ext, xgb_params_by_seed,
                        out_tables, seeds):
     from sklearn.ensemble import RandomForestClassifier
     from sklearn.impute import SimpleImputer
@@ -562,7 +507,7 @@ def weight_sensitivity(data_dir, X_ext_raw, y_ext, mines, xgb_params_by_seed,
     try:
         from xgboost import XGBClassifier
     except ImportError:
-        print('[警告] 未安装xgboost, 权重敏感性仅运行RF。')
+        print('[warning] xgboost is unavailable; weight sensitivity will run for RF only.')
         XGBClassifier = None
 
     data_dir = Path(data_dir)
@@ -588,7 +533,7 @@ def weight_sensitivity(data_dir, X_ext_raw, y_ext, mines, xgb_params_by_seed,
         return np.array([lut[v] for v in y], dtype=float)
 
     def fit_xgb_two_stage(params, seed, Xa, ya, weighted):
-        """复现主程序的两阶段早停协议(15%监控片 -> best_iteration -> 全量重拟合)。"""
+        """Reproduce the two-stage early-stopping and full-refit protocol."""
         p = {k: v for k, v in params.items() if not str(k).startswith('__')}
         sw = bal_w(ya) if weighted else None
         try:
@@ -681,16 +626,12 @@ def weight_sensitivity(data_dir, X_ext_raw, y_ext, mines, xgb_params_by_seed,
     ]
     pc_s.to_csv(out_tables / 'WeightSensitivity_PerClass.csv', index=False,
                 encoding='utf-8-sig')
-    print('[完成] 类权重敏感性(balanced=主程序现状复现, uniform=去权重对照)。')
+    print('[done] weight sensitivity completed: balanced reproduces the pipeline; uniform removes weighting.')
     return res, pc
 
 
-# ------------------------------------------------------------------
-# 代表模型自动选择
-# ------------------------------------------------------------------
 def choose_representative_models(output_dir):
-    """RF-Default(预设基线) + 训练域CV均值最高的XGBoost配置(前瞻式选择)
-       + XGBoost-SSA(回顾性外部参照)。"""
+    """Select the RF baseline, the training-CV-leading XGBoost model, and a retrospective external reference."""
     p = Path(output_dir) / 'Tables' / 'FinalEval_Test_External_Raw.csv'
     xgb_best, xgb_params_by_seed = None, {}
     if p.exists():
@@ -699,8 +640,8 @@ def choose_representative_models(output_dir):
         if not xg.empty and 'Train_Internal_CV_F1' in xg.columns:
             mean_cv = xg.groupby('Model')['Train_Internal_CV_F1'].mean()
             xgb_best = mean_cv.idxmax()
-            print(f'[信息] 训练域CV预选XGBoost配置: {xgb_best} '
-                  f'(mean train-CV F1={mean_cv.max():.4f}, 未使用任何外部信息)')
+            print(f'[info] training-CV-selected XGBoost configuration: {xgb_best} '
+                  f'(mean training-CV F1={mean_cv.max():.4f}; no external information used)')
             sub = xg[xg.Model == xgb_best]
             if 'Best_Params_JSON' in sub.columns:
                 for _, r in sub.iterrows():
@@ -713,38 +654,47 @@ def choose_representative_models(output_dir):
     if xgb_best:
         reps.append(xgb_best)
     if 'XGBoost-SSA' not in reps:
-        reps.append('XGBoost-SSA')   # 回顾性探索参照, 写作时须标注为事后发现
+        reps.append('XGBoost-SSA')
     return reps, xgb_best, xgb_params_by_seed
 
 
-README = """Per-mine analysis outputs — 字段说明与论文用法
-=================================================
-PerMine_Composition.csv        逐矿样本量、O/G/T/P构成、类别数; 直接作为
-                               稿件新表"External mines overview"的数据源。
-PerMine_Performance_AllModels.csv  全部28配置x12矿的指标(30种子均值/SD),
-                               放补充材料。
-PerMine_Performance_Main.csv   代表模型逐矿主表: present-class macro-F1
-                               (bootstrap 95%区间, 样本x随机拟合联合重采样)、
-                               MCC、balanced accuracy、逐类召回、主要误判方向。
-                               注意: macro-F1只对该矿实际存在的类别取平均
-                               ("macro-F1 over the classes present in that
-                               mine"); 类别数不同的矿之间分数不可直接排名;
-                               N<15的矿只作描述性解读。
-ConditionalKS.csv              pooled KS + 分类别条件KS + 四类等权平均。
-                               马兰参照域默认为153个训练样本。若条件KS明显低于pooled KS, 说明原4.6节的漂移
-                               部分来自类别比例变化(label shift), 相应结论
-                               必须改写; O类样本少(11 vs 23), 其KS为探索性,
-                               解读以bootstrap区间为准。
-PerMine_KS.csv                 每矿8特征KS及均值(相对马兰域)。
-KS_vs_Performance.csv          每矿平均KS与主模型MCC的Spearman关联
-                               (n以实际矿井数为准, 只能写exploratory mine-level
-                               association, 不能写因果)。
-WeightSensitivity.csv          balanced=主程序真实行为的复现(所有模型实际
-WeightSensitivity_PerClass.csv 均带逆频率权重), uniform=去掉权重的对照。
-                               解读: 两者差= 类权重的贡献; balanced下少数类
-                               仍失败 => 权重无法弥补少数类水化学覆盖不足
-                               与跨矿漂移(稿件3.4节需按此改写)。
-Figures/                       三张图可直接作为稿件新图的底稿。
+README = """Per-mine analysis outputs
+=========================
+
+PerMine_Composition.csv
+    Mine-level sample counts, O/G/T/P composition, represented classes, and
+    flags for classes with fewer than five samples.
+
+PerMine_Performance_AllModels.csv
+    Mine-level metrics for all 28 configurations, summarized across repeated
+    locked evaluations.
+
+PerMine_Performance_Main.csv
+    Representative-model results by mine, including present-class macro-F1,
+    bootstrap intervals, MCC, balanced accuracy, class recall, and the dominant
+    confusion direction. Present-class macro-F1 averages only classes observed
+    in that mine, so mines with different class coverage should not be ranked
+    directly. Results for mines with N < 15 are descriptive.
+
+ConditionalKS.csv
+    Pooled and class-conditional KS statistics using the Malan training domain
+    as the default reference. Small O and P reference samples make their
+    class-conditional estimates exploratory.
+
+PerMine_KS.csv
+    Feature-level KS statistics and their mean and median for each mine.
+
+KS_vs_Performance.csv
+    Exploratory Spearman association between mean mine-level KS and the
+    selected model's MCC. This analysis is descriptive and not causal.
+
+WeightSensitivity.csv
+WeightSensitivity_PerClass.csv
+    Comparison of balanced weighting with an unweighted control, reported
+    overall and by source class.
+
+Figures/
+    Per-mine performance, class-conditional KS, and shift-performance figures.
 """
 
 
@@ -753,11 +703,11 @@ def main():
     ap.add_argument('--output_dir', default='../Recreated_Model_Output')
     ap.add_argument('--data_dir', default='../Input_Data')
     ap.add_argument('--external_file', default=None,
-                    help='默认在data_dir中按主程序候选名查找')
+                    help='Search the data directory using the main-pipeline filename candidates.')
     ap.add_argument('--mine_col', default='auto')
     ap.add_argument('--mine_map_file', default=None)
     ap.add_argument('--train_domain', choices=['all', 'train_only'],
-                    default='train_only', help='KS的马兰参照域: 默认153训练集; all为192全样本')
+                    default='train_only', help='Malan KS reference: 153 training samples by default; use all for 192 samples.')
     ap.add_argument('--n_boot', type=int, default=500)
     ap.add_argument('--skip_weight_sensitivity', action='store_true')
     args = ap.parse_args()
@@ -768,31 +718,31 @@ def main():
     out_tables.mkdir(parents=True, exist_ok=True)
     out_figs.mkdir(parents=True, exist_ok=True)
 
-    # 外部文件定位(与主程序候选名一致)
+
     ext_path = args.external_file
     if ext_path is None:
         for cand in ('external_validation_set.xlsx', 'val_set.xlsx',
-                     'validation_set.xlsx', '验证集.xlsx'):
+                     'validation_set.xlsx', '\u9a8c\u8bc1\u96c6.xlsx'):
             p = Path(args.data_dir) / cand
             if p.exists():
                 ext_path = p
                 break
     if ext_path is None:
-        sys.exit('[错误] 未找到外部验证集文件, 请用 --external_file 指定。')
-    print(f'[信息] 外部验证集: {ext_path}')
+        sys.exit('[error] external validation file not found; specify it with --external_file.')
+    print(f'[info] external validation file: {ext_path}')
 
     X_ext, y_ext, mines, _ = load_external_with_mines(
         ext_path, args.mine_col, args.mine_map_file)
-    print(f'[信息] 矿井数: {len(pd.unique(mines))}  外部样本: {len(y_ext)}')
+    print(f'[info] mines: {len(pd.unique(mines))}; external samples: {len(y_ext)}')
 
     pred_ext = load_predictions(args.output_dir)
     sanity_check_alignment(pred_ext, y_ext)
 
     reps, xgb_best, xgb_params_by_seed = choose_representative_models(
         args.output_dir)
-    print(f'[信息] 代表模型: {reps}')
+    print(f'[info] representative models: {reps}')
 
-    comp, per_seed, main_tab = per_mine_performance(
+    comp, per_seed, _ = per_mine_performance(
         pred_ext, y_ext, mines, out_tables, out_figs, reps,
         n_boot=args.n_boot)
 
@@ -806,11 +756,11 @@ def main():
 
     if not args.skip_weight_sensitivity:
         seeds = sorted(pred_ext['Run_Seed'].dropna().astype(int).unique())
-        weight_sensitivity(args.data_dir, X_ext, y_ext, mines,
+        weight_sensitivity(args.data_dir, X_ext, y_ext,
                            xgb_params_by_seed, out_tables, seeds)
 
     (out_root / 'README_PerMine.txt').write_text(README, encoding='utf-8')
-    print(f'\n[全部完成] 结果目录: {out_root}')
+    print(f'\n[done] results written to: {out_root}')
 
 
 if __name__ == '__main__':

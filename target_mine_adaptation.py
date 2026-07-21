@@ -1,44 +1,20 @@
-# -*- coding: utf-8 -*-
-"""
-Target-mine adaptation experiment for cross-mine mine-water source identification.
-目标矿适配实验 —— 验证"给锁定模型喂入少量目标矿标记样本即可恢复性能"。
 
-设计(与主程序 main_analysis_pipeline.py / per_mine_analysis.py 完全对齐):
-  * 特征        : x1..x8 (K+, Na+, Ca2+, Mg2+, Cl-, SO42-, HCO3-, pH) 全部8个核心特征
-  * 类别        : 0=O(奥灰) 1=G(老空) 2=T(太灰) 3=P(砂岩裂隙), 与 CANONICAL_ORDER 一致
-  * 预处理      : SimpleImputer(median), 仅在各自"训练数据"上 fit(与 pipeline 一致; 树模型不缩放)
-  * 类不平衡    : 训练时使用一次 balanced sample_weight; RF 不再同时叠加 class_weight
-  * 锁定模型    : RF-Default(参数固定, 无搜索, 可完全复现) 或 XGBoost-Default(工厂默认参数)
-                 —— XGBoost-SSA 每个种子都要重跑 SSA 搜索, 需导入主程序; 这里默认用无搜索的
-                    Default 配置即可清楚地演示"目标矿适配"效应。若要严格用 SSA, 见文末 NOTE。
+"""Target-mine adaptation experiment for cross-mine mine-water source identification.
 
-对每个目标矿, 重复 R 次(默认30, 与主程序30种子协议一致):
-  (1) 按类别分层, 把该矿的带标签样本拆成【适配子集】和【与之不相交的测试子集】(固定种子);
-  (2) baseline    : 仅用马兰训练集(train=153)训练锁定模型 → 在该矿测试子集上评估;
-  (3) adapted     : 用 马兰训练集 + 适配子集 训练同一锁定模型 → 在同一测试子集上评估;
-  (4) 记录配对结果(同一测试子集 → 配对比较)。
-再做一次【适配样本量扫描】(10/20/40/80...), 说明"需要多少本地样本"。
+The script compares a locked source-domain baseline with supervised target-mine
+adaptation using non-overlapping local adaptation and evaluation subsets. It
+writes per-run results, summary tables, adaptation-size sweeps, and a figure
+under ``<output_dir>/LocalCalibration``.
 
-【红线】适配子集与测试子集绝不重叠(脚本内 assert 强制); 预处理只在训练数据上 fit。
-
-产出 <output_dir>/LocalCalibration/ :
-  Tables/LocalCalibration_Summary.csv     每矿 baseline vs adapted 的均值/SD + 配对差描述
-  Tables/LocalCalibration_PerRun.csv      每矿每次重复的逐条记录(便于自查/画箱线图)
-  Tables/LocalCalibration_SizeSweep.csv   适配样本量扫描逐次记录
-  Tables/LocalCalibration_SizeSweep_Summary.csv  适配样本量扫描汇总
-  Figures/Fig_TargetMineAdaptation.png    前后对比柱状图 + 样本量恢复曲线
-
-用法(在主程序同一目录下):
-  python local_calibration.py \
-      --data_dir ../Input_Data \
-      --output_dir ../Recreated_Model_Output \
-      --mines auto \
-      --model RF-Default \
-      --n_repeats 30 --calib_frac 0.5 --seed 20240101
-
-依赖: numpy pandas scikit-learn matplotlib (--model XGBoost-Default 时另需 xgboost)
-作者: De Gao
-"""
+Example:
+    python target_mine_adaptation.py \
+        --data_dir ../Input_Data \
+        --output_dir ../Recreated_Model_Output \
+        --mines auto \
+        --model RF-Default \
+        --n_repeats 30 \
+        --calib_frac 0.5 \
+        --seed 20240101"""
 
 import argparse
 import sys
@@ -54,9 +30,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-# ------------------------------------------------------------------
-# 与主程序一致的常量(勿改)
-# ------------------------------------------------------------------
+
 CORE_FEATURE_COLS = ['x1', 'x2', 'x3', 'x4', 'x5', 'x6', 'x7', 'x8']
 CANONICAL_ORDER = [
     'Ordovician limestone (O)',
@@ -64,35 +38,30 @@ CANONICAL_ORDER = [
     'Taiyuan limestone (T)',
     'Permian sandstone fissure (P)',
 ]
-SHORT = ['O', 'G', 'T', 'P']
 PATTERNS = {
-    0: ('ordovician', '奥灰', '奥陶'),
-    1: ('goaf', '老空', '采空'),
-    2: ('taiyuan', '太灰', '太原'),
-    3: ('permian', 'sandstone', '砂岩', '二叠'),
+    0: ('ordovician', '\u5965\u7070', '\u5965\u9676'),
+    1: ('goaf', '\u8001\u7a7a', '\u91c7\u7a7a'),
+    2: ('taiyuan', '\u592a\u7070', '\u592a\u539f'),
+    3: ('permian', 'sandstone', '\u7802\u5ca9', '\u4e8c\u53e0'),
 }
 EXACT_ALIASES = {'2': 0, '2.0': 0, 'o': 0, '3': 1, '3.0': 1, 'g': 1,
                  '4': 2, '4.0': 2, 't': 2, '5': 3, '5.0': 3, 'p': 3}
 MINE_COL_CANDIDATES = ['mine', 'mine_id', 'mine_name', 'Mine', 'Mine_ID',
-                       'MineName', '矿井名称', '矿井', '矿名', '煤矿', '矿区', '矿']
-ROMAN = {'西曲': 'Xiqu', '屯兰': 'Tunlan', '西铭': 'Ximing', '东曲矿': 'Dongqu',
-         '镇城底': 'Zhenchengdi', '义城矿': 'Yicheng', '杜儿坪': "Du'erping",
-         '官地矿': 'Guandi', '福昌': 'Fuchang', '南岭矿': 'Nanling',
-         '世纪金鑫': 'Shijijinxin', '铂龙': 'Bolong'}
+                       'MineName', '\u77ff\u4e95\u540d\u79f0', '\u77ff\u4e95', '\u77ff\u540d', '\u7164\u77ff', '\u77ff\u533a', '\u77ff']
+ROMAN = {'\u897f\u66f2': 'Xiqu', '\u5c6f\u5170': 'Tunlan', '\u897f\u94ed': 'Ximing', '\u4e1c\u66f2\u77ff': 'Dongqu',
+         '\u9547\u57ce\u5e95': 'Zhenchengdi', '\u4e49\u57ce\u77ff': 'Yicheng', '\u675c\u513f\u576a': "Du'erping",
+         '\u5b98\u5730\u77ff': 'Guandi', '\u798f\u660c': 'Fuchang', '\u5357\u5cad\u77ff': 'Nanling',
+         '\u4e16\u7eaa\u91d1\u946b': 'Shijijinxin', '\u94c2\u9f99': 'Bolong'}
 
-# RF-Default: 主程序中固定参数(无搜索); 类别权重由 sample_weight 单独提供,
-# 避免 RF class_weight 与 sample_weight 重复加权。
+
 RF_DEFAULT_PARAMS = dict(n_estimators=200, max_features='sqrt', max_depth=8,
                          min_samples_leaf=4, min_samples_split=6, max_samples=0.8)
-# XGBoost-Default: _unified_build_model 中 XGBoost 的工厂默认参数
+
 XGB_DEFAULT_PARAMS = dict(n_estimators=300, max_depth=4, learning_rate=0.1,
                           subsample=0.8, colsample_bytree=0.8, reg_alpha=0.1,
                           reg_lambda=1.0, min_child_weight=5, gamma=0.1)
 
 
-# ------------------------------------------------------------------
-# 标签规范化 / 数据加载(复现主程序逻辑)
-# ------------------------------------------------------------------
 def encode_label(label):
     s = str(label).strip()
     low = s.lower()
@@ -104,18 +73,18 @@ def encode_label(label):
     for i, name in enumerate(CANONICAL_ORDER):
         if s == name:
             return i
-    return -1  # 未知标签 -> 剔除
+    return -1
 
 
 def _resolve_target_col(df):
-    for cand in ('y', '充水水源', '水源', '类别', '标签', 'label', 'target', 'class'):
+    for cand in ('y', '\u5145\u6c34\u6c34\u6e90', '\u6c34\u6e90', '\u7c7b\u522b', '\u6807\u7b7e', 'label', 'target', 'class'):
         if cand in df.columns:
             return cand
     return df.columns[-1]
 
 
 def load_xy(path):
-    """加载 train_set/test_set 类文件 -> (X_raw[n,8], y_enc[n]); 剔除未知标签。"""
+    """Load a labeled workbook and return filtered feature and label arrays."""
     path = Path(path)
     if not path.exists():
         sys.exit(f'[error] file not found: {path}')
@@ -136,7 +105,7 @@ def load_xy(path):
 
 
 def load_external_with_mines(path, mine_col='auto'):
-    """加载外部集 -> (X_raw[n,8], y_enc[n], mines[n])。"""
+    """Load the external dataset and return features, labels, and mine identifiers."""
     path = Path(path)
     if not path.exists():
         sys.exit(f'[error] external file not found: {path}')
@@ -148,7 +117,7 @@ def load_external_with_mines(path, mine_col='auto'):
         if df.shape[1] >= len(expected):
             names = expected + [f'extra{i}' for i in range(df.shape[1] - len(expected))]
             df = pd.read_excel(path, header=None, names=names)
-    # mine column
+
     mines = None
     if mine_col not in ('auto', None) and mine_col in df.columns:
         mines = df[mine_col].astype(str).str.strip().values
@@ -167,9 +136,6 @@ def load_external_with_mines(path, mine_col='auto'):
     return X[keep], y[keep], mines[keep]
 
 
-# ------------------------------------------------------------------
-# 指标(与 per_mine_analysis.py 完全一致的 bincount 实现)
-# ------------------------------------------------------------------
 def _confusion(y_true, y_pred, k=4):
     return np.bincount(y_true * k + y_pred, minlength=k * k).reshape(k, k)
 
@@ -199,9 +165,6 @@ def balanced_acc(y_true, y_pred, k=4):
     return float((np.diag(cm)[present] / rows[present]).mean()) if present.any() else np.nan
 
 
-# ------------------------------------------------------------------
-# 锁定模型 factory + fit(对齐 _unified_build_model / _unified_fit)
-# ------------------------------------------------------------------
 def build_model(name, seed):
     if name == 'RF-Default':
         return RandomForestClassifier(
@@ -228,21 +191,18 @@ def build_model(name, seed):
 
 
 def fit_predict(model_name, X_tr_raw, y_tr, X_te_raw, seed):
-    """在训练数据上 fit imputer+model(单次 balanced sample_weight), 预测测试集标签向量。"""
+    """Fit preprocessing and one weighted model, then predict the evaluation set."""
     imp = SimpleImputer(strategy='median')
     X_tr = imp.fit_transform(X_tr_raw)
     X_te = imp.transform(X_te_raw)
-    sw = compute_sample_weight('balanced', y_tr)   # == precompute_sample_weight
+    sw = compute_sample_weight('balanced', y_tr)
     model = build_model(model_name, seed)
     model.fit(X_tr, y_tr, sample_weight=sw)
     return model.predict(X_te).astype(int)
 
 
-# ------------------------------------------------------------------
-# 分层拆分: 每类按 calib_frac 分到适配/测试; 单样本类归入适配侧
-# ------------------------------------------------------------------
 def largest_remainder_counts(y_pool, requested_n):
-    """按最大余数法给各类别分配精确样本数。"""
+    """Allocate an exact sample count by the largest-remainder method."""
     classes, counts = np.unique(y_pool, return_counts=True)
     requested_n = int(requested_n)
     if requested_n > int(counts.sum()):
@@ -266,7 +226,7 @@ def largest_remainder_counts(y_pool, requested_n):
 
 
 def stratified_split(y_m, calib_frac, rng, calib_n=None):
-    """返回 (adapt_idx, test_idx), 互不相交。calib_n 指定时按每类比例抽固定总量。"""
+    """Return disjoint adaptation and evaluation indices with optional exact size."""
     calib_idx, test_idx = [], []
     for c in np.unique(y_m):
         idx = np.where(y_m == c)[0]
@@ -274,11 +234,11 @@ def stratified_split(y_m, calib_frac, rng, calib_n=None):
         if len(idx) == 1:
             calib_idx.append(idx[0]); continue
         k = max(1, int(round(len(idx) * calib_frac)))
-        k = min(k, len(idx) - 1)  # 保证测试侧至少留1个
+        k = min(k, len(idx) - 1)
         calib_idx.extend(idx[:k]); test_idx.extend(idx[k:])
     calib_idx = np.array(sorted(calib_idx)); test_idx = np.array(sorted(test_idx))
     if calib_n is not None and len(calib_idx) > calib_n:
-        # 从适配候选侧再分层抽精确 calib_n 个(最大余数法)
+
         sel = []
         yc = y_m[calib_idx]
         allocation = largest_remainder_counts(yc, calib_n)
@@ -292,9 +252,6 @@ def stratified_split(y_m, calib_frac, rng, calib_n=None):
     return calib_idx, test_idx
 
 
-# ------------------------------------------------------------------
-# 主实验
-# ------------------------------------------------------------------
 def run_experiment(Xtr, ytr, Xm, ym, model_name, n_repeats, calib_frac, base_seed):
     rows = []
     for r in range(n_repeats):
@@ -302,11 +259,11 @@ def run_experiment(Xtr, ytr, Xm, ym, model_name, n_repeats, calib_frac, base_see
         rng = np.random.default_rng(seed)
         c_idx, t_idx = stratified_split(ym, calib_frac, rng)
         if len(t_idx) < 3 or len(np.unique(ym[t_idx])) < 2:
-            continue  # 测试子集太小/单类, 跳过该次
+            continue
         yte = ym[t_idx]; Xte = Xm[t_idx]
-        # baseline: 仅马兰
+
         yp_b = fit_predict(model_name, Xtr, ytr, Xte, seed)
-        # adapted: 马兰 + 目标矿适配子集
+
         Xtr2 = np.vstack([Xtr, Xm[c_idx]]); ytr2 = np.concatenate([ytr, ym[c_idx]])
         yp_r = fit_predict(model_name, Xtr2, ytr2, Xte, seed)
         rows.append(dict(
@@ -396,7 +353,7 @@ def summarize(df, mine):
 def make_figure(summ_df, sweep_dict, out_png):
     n = len(summ_df)
     fig, axes = plt.subplots(1, 2, figsize=(11, 4.2))
-    # (a) before/after macro-F1(present) per mine
+
     ax = axes[0]; x = np.arange(n); w = 0.36
     ax.bar(x - w/2, summ_df['base_macroF1p'], w, yerr=summ_df['base_macroF1p_sd'],
            capsize=3, label='Baseline (Malan only)', color='#B0B0B0')
@@ -405,7 +362,7 @@ def make_figure(summ_df, sweep_dict, out_png):
     ax.set_xticks(x); ax.set_xticklabels(summ_df['Mine'], rotation=0)
     ax.set_ylabel('macro-F1 (present classes)'); ax.set_ylim(0, 1)
     ax.set_title('(a) Held-out target-mine performance'); ax.legend(frameon=False, fontsize=9)
-    # (b) adaptation-size sweep
+
     ax = axes[1]
     for mine, sw in sweep_dict.items():
         if len(sw):
@@ -414,7 +371,7 @@ def make_figure(summ_df, sweep_dict, out_png):
     ax.set_xlabel('Number of local adaptation samples')
     ax.set_ylabel('macro-F1 (present classes)'); ax.set_ylim(0, 1)
     ax.set_title('(b) Recovery vs local sample size'); ax.legend(frameon=False, fontsize=9)
-    fig.tight_layout(); fig.savefig(out_png, dpi=300, bbox_inches='tight'); plt.close(fig)
+    fig.tight_layout(); fig.savefig(out_png, dpi=600, bbox_inches='tight'); plt.close(fig)
 
 
 def main():
@@ -425,7 +382,7 @@ def main():
     ap.add_argument('--output_dir', default='../Recreated_Model_Output')
     ap.add_argument('--mine_col', default='auto')
     ap.add_argument('--mines', default='auto',
-                    help='comma-separated mine names (Chinese or romanized), or "auto" for the 2 largest')
+                    help='Comma-separated mine names or "auto" for the two largest mines.')
     ap.add_argument('--model', default='RF-Default', choices=['RF-Default', 'XGBoost-Default'])
     ap.add_argument('--n_repeats', type=int, default=30)
     ap.add_argument('--calib_frac', type=float, default=0.5)
@@ -437,16 +394,15 @@ def main():
     train_path = Path(args.train_path) if args.train_path else dd / 'train_set.xlsx'
     ext_path = Path(args.external_path) if args.external_path else dd / 'external_validation_set.xlsx'
 
-    # 马兰训练域统一为 train_set.xlsx 的 153 个训练样本; internal test 不参与本地适配训练。
-    Xtr1, ytr1 = load_xy(train_path)
-    Xtr, ytr = Xtr1, ytr1
+
+    Xtr, ytr = load_xy(train_path)
     print(f'[data] Malan training domain: {len(ytr)} train samples '
           f'(class counts {np.bincount(ytr, minlength=4).tolist()} = O/G/T/P)')
 
     Xe, ye, mines = load_external_with_mines(ext_path, args.mine_col)
     print(f'[data] external set: {len(ye)} samples across {len(set(mines))} mines')
 
-    # 选目标矿
+
     uniq, counts = np.unique(mines, return_counts=True)
     order = uniq[np.argsort(-counts)]
     if args.mines.strip().lower() == 'auto':
@@ -516,18 +472,8 @@ def main():
                    'delta_macroF1p_max', 'base_mcc', 'adapted_mcc', 'delta_mcc']]
           .to_string(index=False))
     print(f'\n[done] outputs written to: {out_dir}')
-    print('论文写法建议: 报告配对提升方向、均值、中位数和范围; '
-          '30次重复划分不作为独立矿井实验进行正式显著性推断。')
+    print('Repeated splits describe stability and are not independent mine-level experiments.')
 
 
-# ------------------------------------------------------------------
-# NOTE — 若要严格用 XGBoost-SSA(而非 Default)做目标矿适配:
-#   XGBoost-SSA 的超参数是每个种子由 SSA 优化器现搜出来的, 无固定值。两种做法:
-#   (A) 复用主程序: 从 main_analysis_pipeline import _nested_search_once / _unified_fit,
-#       在每个 seed 上对 (马兰) 与 (马兰+适配子集) 各搜一次 SSA 再拟合、评估。
-#   (B) 近似: 从 RegenData/final_model_registry.pkl 或 Best_Params_JSON 里取该配置某个
-#       代表种子的 SSA 最优参数, 固定后当作 'XGBoost-SSA-locked' 复用到本脚本的 build_model。
-#   出于可复现性, 本脚本默认用无搜索的 RF-Default / XGBoost-Default 即可清楚演示适配效应。
-# ------------------------------------------------------------------
 if __name__ == '__main__':
     main()

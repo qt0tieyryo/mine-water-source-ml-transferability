@@ -2,7 +2,7 @@
 Mine Water Source Identification - Machine Learning Pipeline
 
 Comparison : 4 algorithms x 7 optimizers (28 combinations)
-                 RF / XGBoost / LightGBM / SVM-RBF
+                 RF / XGBoost / LightGBM / SVM
                  x Default / Optuna / GridSearch / PSO / SSA / DE / GWO
 Validation : Internal test set + locked external cross-mine validation set.
              External validation is loaded only after model selection is
@@ -564,7 +564,7 @@ def parse_arguments():
     parser.add_argument('--n_trials_xgb',  type=int, default=24,
                         help='Optuna trials for XGBoost in the budget-matched workflow (default: 24)')
     parser.add_argument('--n_trials_svm',  type=int, default=24,
-                        help='Optuna trials for SVM-RBF in the budget-matched workflow (default: 24)')
+                        help='Optuna trials for SVM in the budget-matched workflow (default: 24)')
     parser.add_argument('--n_trials_lgbm', type=int, default=24,
                         help='Optuna trials for LightGBM in the budget-matched workflow (default: 24)')
     parser.add_argument('--phase1_runs', type=int, default=10,
@@ -2970,32 +2970,90 @@ def _export_sci_figure_table_bundle(output_dir, water_source_mapping=None):
         ('Figure 4-8', 'Main-Figure', 'LightGBM-Default class-level mean(|SHAP|) heatmap',
          ['Tables/ClassLevelSHAP_LightGBM-Default_external.csv']),
 
-        ('Table S1', 'Supp-Table', 'Search budget audit',
-         ['Tables/Search_Budget_Audit_Summary.csv']),
-        ('Table S2', 'Supp-Table', 'Search space audit',
-         ['Tables/Search_Space_Audit.csv']),
-        ('Table S3', 'Supp-Table', 'Full 28-model summary with CI/IQR',
-         ['Tables/FinalEval_Test_External_Summary.csv']),
-        ('Table S4', 'Supp-Table', 'Ranking comparison across stages',
-         ['Tables/Generalization_Ranking_Comparison.csv']),
-        ('Table S5', 'Supp-Table', 'Spearman ranking consistency',
-         ['Tables/Generalization_Ranking_Spearman.csv']),
-        ('Table S6', 'Supp-Table', 'Internal-test combined ranking',
-         ['Tables/SCI_Test_Combined_Ranking.csv']),
-        ('Table S7', 'Supp-Table', 'External-validation combined ranking',
-         ['Tables/SCI_Validation_Combined_Ranking.csv']),
-        ('Table S8', 'Supp-Table', 'Complete domain-shift table',
-         ['Tables/Dataset_DomainShift_KS.csv']),
+        # Supplementary tables
+        ('Table S1', 'Supp-Table',
+         'Class distributions of the locked datasets after CBE and label filtering',
+         ['Tables/Dataset_Class_Distribution.csv']),
 
-        ('Figure S1', 'Supp-Figure', 'External vs internal macro-F1 scatter',
-         ['Tables/FinalEval_Test_External_Summary.csv',
-          'Tables/Generalization_Ranking_Spearman.csv']),
-        ('Figure S2', 'Supp-Figure', 'Search wall-clock + eval audit',
-         ['Tables/Search_Budget_Audit_Summary.csv']),
-        ('Figure S3', 'Supp-Figure', 'Correlation matrices (train vs external)',
+        ('Table S2', 'Supp-Table',
+         'Hyperparameter search dimensions and candidate values',
+         ['Tables/Search_Space_Audit.csv']),
+
+        ('Table S3', 'Supp-Table',
+         'Software environment and package versions',
+         ['MANUAL_REQUIREMENTS_TXT']),
+
+        ('Table S4', 'Supp-Table',
+         'Complete performance metrics of the 28 algorithm-tuning-strategy combinations',
+         ['Tables/FinalEval_Test_External_Summary.csv']),
+
+        ('Table S5', 'Supp-Table',
+         'Class-wise F1 scores of all 28 model combinations on the external validation set',
+         ['Tables/PerClassF1_External_AllModels.csv']),
+
+        ('Table S6', 'Supp-Table',
+         'Complete feature-level KS statistics and SHAP summaries',
+         ['Tables/Dataset_DomainShift_KS.csv',
+          'Tables/SHAP_Generalization_Contrast.csv']),
+
+        ('Table S7', 'Supp-Table',
+         'RF hyperparameter stability across 30 repeated locked evaluations',
+         ['Tables/FinalEval_Test_External_Raw.csv']),
+
+        ('Table S8', 'Supp-Table',
+         'Per-mine sample composition, mean marginal KS, and performance of the three focus models',
+         ['PerMine_Analysis/Tables/PerMine_Composition.csv',
+          'PerMine_Analysis/Tables/PerMine_KS.csv',
+          'PerMine_Analysis/Tables/PerMine_Performance_Main.csv']),
+
+        ('Table S9', 'Supp-Table',
+         'Per-mine performance of all 28 model configurations',
+         ['PerMine_Analysis/Tables/PerMine_Performance_AllModels.csv']),
+
+        ('Table S10', 'Supp-Table',
+         'Marginal and class-conditional KS statistics',
+         ['PerMine_Analysis/Tables/ConditionalKS.csv']),
+
+        ('Table S11', 'Supp-Table',
+         'Target-mine adaptation summary for Xiqu and Tunlan',
+         ['LocalCalibration/Tables/LocalCalibration_Summary.csv']),
+
+        ('Table S12', 'Supp-Table',
+         'Per-run paired target-mine adaptation records',
+         ['LocalCalibration/Tables/LocalCalibration_PerRun.csv']),
+
+        ('Table S13', 'Supp-Table',
+         'Exact adaptation-sample-size sweep',
+         ['LocalCalibration/Tables/LocalCalibration_SizeSweep.csv',
+          'LocalCalibration/Tables/LocalCalibration_SizeSweep_Summary.csv']),
+
+        # Supplementary figures
+        ('Figure S1', 'Supp-Figure',
+         'Search convergence trajectories',
+         ['Tables/Search_Convergence_Long.csv']),
+
+        ('Figure S2', 'Supp-Figure',
+         'Bootstrap and paired-seed stability analysis',
+         ['Tables/FinalEval_Test_External_Raw.csv',
+          'Tables/FinalEval_Test_External_Summary.csv']),
+
+        ('Figure S3', 'Supp-Figure',
+         'Q-Q plots for repeated internal and external macro-F1 values and generalization gaps',
+         ['Tables/FinalEval_Test_External_Raw.csv']),
+
+        ('Figure S4', 'Supp-Figure',
+         'K+ high-value tail distribution',
          ['RegenData/nested_raw_arrays.npz']),
-        ('Figure S4', 'Supp-Figure', 'Cross-model SHAP rank migration',
+
+        ('Figure S5', 'Supp-Figure',
+         'SHAP feature-rank migration across model roles',
          ['Tables/SHAP_Generalization_Contrast.csv']),
+
+        ('Figure S6', 'Supp-Figure',
+         'Target-mine adaptation and adaptation-sample-size sweep',
+         ['LocalCalibration/Tables/LocalCalibration_Summary.csv',
+          'LocalCalibration/Tables/LocalCalibration_SizeSweep.csv',
+          'LocalCalibration/Tables/LocalCalibration_SizeSweep_Summary.csv']),
     ]
 
     catalog_rows = []

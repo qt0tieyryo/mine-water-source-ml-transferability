@@ -3029,31 +3029,31 @@ def _export_sci_figure_table_bundle(output_dir, water_source_mapping=None):
 
         # Supplementary figures
         ('Figure S1', 'Supp-Figure',
-         'Search convergence trajectories',
-         ['Tables/Search_Convergence_Long.csv']),
-
-        ('Figure S2', 'Supp-Figure',
-         'Bootstrap and paired-seed stability analysis',
-         ['Tables/FinalEval_Test_External_Raw.csv',
-          'Tables/FinalEval_Test_External_Summary.csv']),
-
-        ('Figure S3', 'Supp-Figure',
-         'Q-Q plots for repeated internal and external macro-F1 values and generalization gaps',
-         ['Tables/FinalEval_Test_External_Raw.csv']),
-
-        ('Figure S4', 'Supp-Figure',
-         'K+ high-value tail distribution',
-         ['RegenData/nested_raw_arrays.npz']),
-
-        ('Figure S5', 'Supp-Figure',
-         'SHAP feature-rank migration across model roles',
-         ['Tables/SHAP_Generalization_Contrast.csv']),
-
-        ('Figure S6', 'Supp-Figure',
          'Target-mine adaptation and adaptation-sample-size sweep',
          ['LocalCalibration/Tables/LocalCalibration_Summary.csv',
           'LocalCalibration/Tables/LocalCalibration_SizeSweep.csv',
           'LocalCalibration/Tables/LocalCalibration_SizeSweep_Summary.csv']),
+
+        ('Figure S2', 'Supp-Figure',
+         'Search convergence trajectories',
+         ['Tables/Search_Convergence_Long.csv']),
+
+        ('Figure S3', 'Supp-Figure',
+         'Bootstrap and paired-seed stability analysis',
+         ['Tables/FinalEval_Test_External_Raw.csv',
+          'Tables/FinalEval_Test_External_Summary.csv']),
+
+        ('Figure S4', 'Supp-Figure',
+         'Q-Q plots for repeated internal and external macro-F1 values and generalization gaps',
+         ['Tables/FinalEval_Test_External_Raw.csv']),
+
+        ('Figure S5', 'Supp-Figure',
+         'K+ high-value tail distribution',
+         ['RegenData/nested_raw_arrays.npz']),
+
+        ('Figure S6', 'Supp-Figure',
+         'SHAP feature-rank migration across model roles',
+         ['Tables/SHAP_Generalization_Contrast.csv']),
     ]
 
     catalog_rows = []

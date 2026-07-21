@@ -17,12 +17,12 @@ The manuscript/supplement mapping is:
   Fig6  train/external feature-shift ECDF panels
   Fig7  relative SHAP importance + SHAP rank migration
   Fig8  joint SHAP-KS risk map
-  FigS1 convergence trajectories
-  FigS2 paired seed-stability comparison (XGBoost-SSA minus LightGBM-Default)
-  FigS3 Q-Q plots for the eta-squared decomposition
-  FigS4 K+ high-value tail distribution
-  FigS5 SHAP rank migration across model roles
-  FigS6 target-mine adaptation and adaptation-sample-size sweep
+  FigS1 target-mine adaptation and adaptation-sample-size sweep
+  FigS2 convergence trajectories
+  FigS3 paired seed-stability comparison (XGBoost-SSA minus LightGBM-Default)
+  FigS4 Q-Q plots for the eta-squared decomposition
+  FigS5 K+ high-value tail distribution
+  FigS6 SHAP rank migration across model roles
 """
 
 from __future__ import annotations
@@ -629,7 +629,7 @@ def figure_03_convergence(source_dir: Path, dirs: dict[str, Path], qa: dict) -> 
         ax.set_xlim(1, 24)
         ax.set_xticks([6, 12, 18, 24])
         box_axes(ax, grid_axis="both")
-        save_panel(fig, ax, f"FigS1_convergence_{algo}", dirs)
+        save_panel(fig, ax, f"FigS2_convergence_{algo}", dirs)
     for i, ax in enumerate(axes):
         if i % 2 == 1:
             ax.set_ylabel("")
@@ -639,9 +639,9 @@ def figure_03_convergence(source_dir: Path, dirs: dict[str, Path], qa: dict) -> 
     fig.text(0.022, 0.48, r"Best-so-far CV macro-$F_{1}$", ha="center", va="center", rotation=90, fontsize=9.0)
     handles = [plt.Line2D([0], [0], color=OPTIMIZER_COLORS[o], lw=1.5, label=o) for o in TUNING_OPTIMIZERS]
     fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, 0.985), ncol=6, frameon=False, fontsize=7.3, columnspacing=1.0)
-    save_fig(fig, "FigS1_search_convergence", dirs)
+    save_fig(fig, "FigS2_search_convergence", dirs)
     plt.close(fig)
-    qa["FigS1"] = {
+    qa["FigS2"] = {
         "source": "Search_Convergence_Long.csv",
         "rows": int(len(df)),
         "evaluation_axis": "Cumulative objective-function evaluations",
@@ -1438,9 +1438,9 @@ def supp_figure_s1(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
     ax.set_ylabel("Bootstrap frequency")
     box_axes(ax)
 
-    save_fig(fig, "FigS2_bootstrap_paired_seed_stability", dirs)
+    save_fig(fig, "FigS3_bootstrap_paired_seed_stability", dirs)
     plt.close(fig)
-    qa["FigS2"] = {"source": "FinalEval_Test_External_Raw.csv", "n_paired_seeds": int(len(diff)), "mean_diff": float(diff.mean())}
+    qa["FigS3"] = {"source": "FinalEval_Test_External_Raw.csv", "n_paired_seeds": int(len(diff)), "mean_diff": float(diff.mean())}
 
 
 def supp_qq_panel(ax: plt.Axes, values: np.ndarray, label: str) -> None:
@@ -1483,9 +1483,9 @@ def supp_figure_s2(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
         ax.set_ylabel("")
     fig.text(0.5, 0.06, "Theoretical normal quantile", ha="center", va="center", fontsize=8.6)
     fig.text(0.025, 0.51, "Standardized residual quantile", ha="center", va="center", rotation=90, fontsize=8.6)
-    save_fig(fig, "FigS3_repeated_macro_f1_qq", dirs)
+    save_fig(fig, "FigS4_repeated_macro_f1_qq", dirs)
     plt.close(fig)
-    qa["FigS3"] = {
+    qa["FigS4"] = {
         "source": "FinalEval_Test_External_Raw.csv",
         "residual_model": "Full two-factor Algorithm × Optimizer cell-mean model",
         "display": "All standardized residual quantiles are shown",
@@ -1561,9 +1561,9 @@ def supp_figure_s3(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
         handlelength=1.15,
     )
 
-    save_fig(fig, "FigS4_k_distribution_high_value_tail", dirs)
+    save_fig(fig, "FigS5_k_distribution_high_value_tail", dirs)
     plt.close(fig)
-    qa["FigS4"] = {
+    qa["FigS5"] = {
         "source": "feature_arrays.npz",
         "transform": "log10(K+ + 1)",
         "pooled_log_quantile_markers": {f"P{int(q * 100)}": value for q, value in pooled_quantiles.items()},
@@ -1593,9 +1593,9 @@ def supp_figure_s4(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
     ax.set_ylabel("Feature", fontsize=8.5)
     ax.tick_params(axis="x", labelsize=7.5)
     ax.tick_params(axis="y", labelsize=8.0)
-    save_fig(fig, "FigS5_shap_rank_migration_roles", dirs)
+    save_fig(fig, "FigS6_shap_rank_migration_roles", dirs)
     plt.close(fig)
-    qa["FigS5"] = {"source": "SHAP_Generalization_Contrast.csv", "roles": role_order}
+    qa["FigS6"] = {"source": "SHAP_Generalization_Contrast.csv", "roles": role_order}
 
 
 def supp_figure_s6_target_mine_adaptation(source_dir: Path, dirs: dict[str, Path], qa: dict) -> None:
@@ -1704,9 +1704,9 @@ def supp_figure_s6_target_mine_adaptation(source_dir: Path, dirs: dict[str, Path
     box_axes(ax, "y")
 
     fig.subplots_adjust(left=0.075, right=0.985, bottom=0.14, top=0.88)
-    save_fig(fig, "FigS6_TargetMineAdaptation", dirs)
+    save_fig(fig, "FigS1_TargetMineAdaptation", dirs)
     plt.close(fig)
-    qa["FigS6"] = {
+    qa["FigS1"] = {
         "source": [
             "LocalCalibration_Summary.csv",
             "LocalCalibration_SizeSweep.csv",
@@ -1768,12 +1768,12 @@ def main() -> None:
         supp_dirs = make_dirs(args.supp_out_dir)
         supp_qa: dict = {"source_dir": str(args.source_dir), "figures": {}}
         supp_builders = [
-            ("FigS1", figure_03_convergence),
-            ("FigS2", supp_figure_s1),
-            ("FigS3", supp_figure_s2),
-            ("FigS4", supp_figure_s3),
-            ("FigS5", supp_figure_s4),
-            ("FigS6", supp_figure_s6_target_mine_adaptation),
+            ("FigS2", figure_03_convergence),
+            ("FigS3", supp_figure_s1),
+            ("FigS4", supp_figure_s2),
+            ("FigS5", supp_figure_s3),
+            ("FigS6", supp_figure_s4),
+            ("FigS1", supp_figure_s6_target_mine_adaptation),
         ]
         for label, fn in supp_builders:
             print(f"[supp] {label}")
